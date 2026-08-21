@@ -8,6 +8,13 @@ import { targetTriple } from "./runtime/release";
 
 const ORIGIN = process.env.TODE_RELEASE_ORIGIN ?? "https://tode.sh/install";
 
+/** This fork's Windows builds live on GitHub releases rather than the release
+ * worker. `releases/latest/download/<asset>` is GitHub's stable alias for the
+ * newest release's copy of an asset, so latest.json there plays the part the
+ * worker's /latest.json plays elsewhere. */
+const WINDOWS_ORIGIN =
+  process.env.TODE_WINDOWS_RELEASE_ORIGIN ?? "https://github.com/fukuyori/terminal-code/releases";
+
 export interface Build {
   version: string;
   channel: string;
@@ -51,15 +58,23 @@ function buildFor(manifest: Manifest): Build {
 }
 
 export async function latest(channel: string): Promise<Build> {
-  const url = channel === "stable" ? `${ORIGIN}/latest.json` : `${ORIGIN}/${channel}/latest.json`;
+  const url =
+    channel === "windows"
+      ? `${WINDOWS_ORIGIN}/latest/download/latest.json`
+      : channel === "stable"
+        ? `${ORIGIN}/latest.json`
+        : `${ORIGIN}/${channel}/latest.json`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`could not read ${url} (${response.status})`);
   return buildFor((await response.json()) as Manifest);
 }
 
-/** A pinned version's manifest, for `tode upgrade --version`. */
+/** A pinned version's manifest, for `tode upgrade --version`. Windows installs
+ * are always the GitHub channel, so the platform picks the origin here. */
 export async function release(version: string): Promise<Build> {
-  const url = `${ORIGIN}/v/${version}/manifest.json`;
+  const url = WINDOWS
+    ? `${WINDOWS_ORIGIN}/download/v${version}/manifest.json`
+    : `${ORIGIN}/v/${version}/manifest.json`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`no release ${version} (${response.status} from ${url})`);
   return buildFor((await response.json()) as Manifest);

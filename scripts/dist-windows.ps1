@@ -13,16 +13,30 @@
     there, and tode resolves that install directly — copying a few hundred
     megabytes of Electron on every dev install would buy nothing. Pass
     -VendorBrowser to stage a private copy anyway.
+
+    -Package cuts a release instead of installing: the same stage, zipped as
+    out\windows-release\tode-<version>-win32-x64.zip next to the latest.json /
+    manifest.json that `tode --upgrade` reads. -Publish uploads those three to
+    a GitHub release tagged v<version>, which is where the windows channel
+    looks for them.
 #>
 [CmdletBinding()]
 param(
     [string]$Version = "0.1.0-win.2",
     [string]$Channel = "windows",
     [switch]$VendorBrowser,
-    [switch]$SkipPath
+    [switch]$SkipPath,
+    [switch]$Package,
+    [switch]$Publish,
+    [string]$Repo = "fukuyori/terminal-code"
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Publish) { $Package = $true }
+if ($Package -and $VendorBrowser) {
+    throw "-VendorBrowser is a dev-install shortcut; a release zip resolves the installed terminal-browser"
+}
 
 # A raw registry write is invisible to programs already running, and to anything
 # Explorer starts later, until it is told. SetEnvironmentVariable does this part
@@ -56,7 +70,15 @@ try {
 }
 
 Write-Output "==> staging $Version"
-$stage = "$app.new"
+if ($Package) {
+    # the directory name becomes the archive's single top level, which the
+    # upgrade extracts with --strip-components 1
+    $out = Join-Path $root "out\windows-release"
+    if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
+    $stage = Join-Path $out "tode"
+} else {
+    $stage = "$app.new"
+}
 if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
@@ -72,7 +94,7 @@ Set-Content -LiteralPath (Join-Path $stage "CHANNEL") -Value $Channel -Encoding 
 Set-Content -LiteralPath (Join-Path $stage "package.json") -Value '{"type":"commonjs"}' -Encoding ascii
 
 $browserRoot = Join-Path $env:LOCALAPPDATA "Programs\terminal-browser"
-if (-not (Test-Path -LiteralPath (Join-Path $browserRoot "cli\dist\main.js"))) {
+if (-not $Package -and -not (Test-Path -LiteralPath (Join-Path $browserRoot "cli\dist\main.js"))) {
     Write-Warning "terminal-browser is not installed at $browserRoot"
     Write-Warning "  install it from https://github.com/fukuyori/terminal-browser/releases before running tode"
 }
@@ -101,6 +123,53 @@ endlocal & exit /b %ERRORLEVEL%
 '@
 New-Item -ItemType Directory -Path (Join-Path $stage "bin") -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $stage "bin\tode.cmd") -Value $launcher -Encoding ascii
+
+if ($Package) {
+    Write-Output "==> packaging"
+    $file = "tode-$Version-win32-x64.zip"
+    $zip = Join-Path $out $file
+    # System32's bsdtar, the same binary the upgrade extracts with. It writes
+    # forward-slash entry names; Compress-Archive historically wrote
+    # backslashes, which everything but Windows reads as literal filenames.
+    $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+    & $tar -a -cf $zip -C $out tode
+    if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+
+    $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    $size = (Get-Item -LiteralPath $zip).Length
+    $manifest = [ordered]@{
+        version = $Version
+        channel = $Channel
+        platforms = [ordered]@{
+            "win32-x64" = [ordered]@{
+                file = $file
+                sha256 = $sha
+                size = $size
+                url = "https://github.com/$Repo/releases/download/v$Version/$file"
+            }
+        }
+    } | ConvertTo-Json -Depth 4
+    # the same document twice: latest.json is what the stable
+    # releases/latest/download alias serves, manifest.json is what a pinned
+    # --version download reads out of its own tag
+    Set-Content -LiteralPath (Join-Path $out "latest.json") -Value $manifest -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $out "manifest.json") -Value $manifest -Encoding ascii
+    Remove-Item -LiteralPath $stage -Recurse -Force
+
+    Write-Output "packaged $Version"
+    Write-Output "  zip       $zip"
+    Write-Output "  manifests $(Join-Path $out 'latest.json'), $(Join-Path $out 'manifest.json')"
+
+    if ($Publish) {
+        Write-Output "==> publishing v$Version to $Repo"
+        & gh release create "v$Version" $zip (Join-Path $out "latest.json") (Join-Path $out "manifest.json") `
+            --repo $Repo --title "tode $Version" --notes "Windows x64 build. ``tode --upgrade`` picks this up; a fresh install still builds from the checkout (see README)."
+        if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+    } else {
+        Write-Output "publish with: gh release create v$Version <zip> <latest.json> <manifest.json> --repo $Repo (or re-run with -Publish)"
+    }
+    exit 0
+}
 
 Write-Output "==> installing to $app"
 $previous = "$app.old"

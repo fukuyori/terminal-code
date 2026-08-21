@@ -192,8 +192,16 @@ Not there yet:
   It is also the way to tell the two failures apart: if it reports no window
   listening, the bridge extension is not running and no chord would have
   reached it either.
-- `tode --upgrade` has nothing to upgrade to: there is no Windows release
-  channel. Re-run `npm run dist:windows` from the checkout instead.
+- `tode --upgrade` follows this fork's [GitHub
+  releases](https://github.com/fukuyori/terminal-code/releases): the `windows`
+  channel reads `latest.json` off the newest release there, and
+  `--upgrade --version <v>` reads the `manifest.json` inside the `v<v>` tag.
+  Until a release is published the check reports a 404 — re-run
+  `npm run dist:windows` from the checkout in the meantime. Cutting a release
+  from a checkout is `npm run release:windows`, which stages the same layout a
+  dev install gets, zips it with the manifests beside it, and prints the
+  `gh release create` line that publishes them (or pass `-Publish` to
+  `scripts\dist-windows.ps1 -Package` to run it directly).
 
 If you would rather not run any of this, the Linux build inside
 [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) is still an option.

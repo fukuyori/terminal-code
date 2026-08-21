@@ -27,3 +27,4 @@ coverage/
 
 # release artifacts
 dist-release/
+out/
