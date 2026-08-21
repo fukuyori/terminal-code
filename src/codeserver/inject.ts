@@ -28,6 +28,16 @@ export const FONT_ROUTE = "/__tode/font.ttf";
 const WEB_CONFIGURATION =
   /(id="vscode-workbench-web-configuration"[^>]*?data-settings=")([^"]*)(")/;
 
+/** Only the workbench document carries this tag, and it is the only html that
+ * should get tode's css and options — with webviews served same-origin, their
+ * documents flow through this proxy too, and a forced background would paint
+ * over their content. */
+export const WORKBENCH_MARKER = 'id="vscode-workbench-web-configuration"';
+
+/** Where the server's own copy of the webview boot page lives, under the
+ * /static route the web server serves its installation from. */
+export const WEBVIEW_PRE_ROUTE = "/out/vs/workbench/contrib/webview/browser/pre/";
+
 const unescapeAttribute = (value: string) =>
   value.replaceAll("&quot;", '"').replaceAll("&amp;", "&");
 const escapeAttribute = (value: string) =>
@@ -36,8 +46,9 @@ const escapeAttribute = (value: string) =>
 export function withConfigurationDefaults(
   html: string,
   defaults: Record<string, unknown>,
+  webviewEndpoint?: string,
 ): string {
-  if (Object.keys(defaults).length === 0) return html;
+  if (Object.keys(defaults).length === 0 && !webviewEndpoint) return html;
   return html.replace(WEB_CONFIGURATION, (all, head: string, body: string, tail: string) => {
     let options: Record<string, unknown>;
     try {
@@ -48,8 +59,26 @@ export function withConfigurationDefaults(
     if (!options || typeof options !== "object") return all;
     const existing = (options.configurationDefaults ?? {}) as Record<string, unknown>;
     options.configurationDefaults = { ...defaults, ...existing };
+    // webviews served from the page's own origin share its renderer process,
+    // which is what lets the synthesized wheel and mouse events terminal-browser
+    // sends reach them — the cdn origin in product.json makes them out-of-process
+    // iframes that those events never hit. It also takes the network out of it.
+    if (webviewEndpoint && !options.webviewEndpoint) options.webviewEndpoint = webviewEndpoint;
     return head + escapeAttribute(JSON.stringify(options)) + tail;
   });
+}
+
+/** The webview boot page insists its hostname be a hash of the parent origin —
+ * the shape its cdn hosting gives it, where every webview gets an isolating
+ * subdomain. Served from the parent's own origin there is no subdomain to
+ * check; being the parent's origin is the fact that matters, so the check
+ * learns to accept it. The replacement is pinned to the exact source line the
+ * vendored server ships; a build that changes it is caught by the pin bump. */
+export function withSameOriginWebviews(html: string): string {
+  return html.replace(
+    "if (hostname === parentOriginHash || hostname.startsWith(parentOriginHash + '.')) {",
+    "if (parentOrigin === self.origin || hostname === parentOriginHash || hostname.startsWith(parentOriginHash + '.')) {",
+  );
 }
 
 export function createInjector(
@@ -126,8 +155,7 @@ export function createInjector(
       (from) => {
         everAnswered = true;
         const type = from.headers["content-type"] ?? "";
-        const css = readCss();
-        if (!type.includes("text/html") || !css) {
+        if (!type.includes("text/html")) {
           response.writeHead(from.statusCode ?? 502, from.headers);
           from.pipe(response);
           return;
@@ -136,11 +164,21 @@ export function createInjector(
         from.on("data", (chunk: Buffer) => chunks.push(chunk));
         from.on("end", () => {
           const body = Buffer.concat(chunks).toString("utf8");
-          const style = `<style id="tode-injected">${css}</style>`;
-          const settled = withConfigurationDefaults(body, readDefaults());
-          const patched = settled.includes("</head>")
-            ? settled.replace("</head>", `${style}</head>`)
-            : `${style}${settled}`;
+          const css = readCss();
+          let patched = body;
+          if (body.includes(WORKBENCH_MARKER)) {
+            const host = request.headers.host;
+            const endpoint = host ? `http://${host}/static${WEBVIEW_PRE_ROUTE}` : undefined;
+            patched = withConfigurationDefaults(body, readDefaults(), endpoint);
+            if (css) {
+              const style = `<style id="tode-injected">${css}</style>`;
+              patched = patched.includes("</head>")
+                ? patched.replace("</head>", `${style}</head>`)
+                : `${style}${patched}`;
+            }
+          } else if (request.url?.includes(WEBVIEW_PRE_ROUTE)) {
+            patched = withSameOriginWebviews(body);
+          }
           const out = Buffer.from(patched, "utf8");
           const headers = { ...from.headers, "content-length": String(out.byteLength) };
           delete headers["content-encoding"];

@@ -60,16 +60,24 @@ const get = async (port, headers = {}) => {
   return { status: response.status, body: await response.text(), headers: response.headers };
 };
 
-test("css lands in the html document before the head closes", async () => {
+const MARKER = '<meta id="vscode-workbench-web-configuration" data-settings="{}">';
+
+test("css lands in the workbench document before the head closes", async () => {
   await withPair(
     (_request, response) => {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end("<html><head><title>x</title></head><body>hi</body></html>");
+      response.end(`<html><head><title>x</title>${MARKER}</head><body>hi</body></html>`);
     },
     async ({ proxyPort }) => {
       const { body } = await get(proxyPort, { accept: "text/html" });
       assert.match(body, /<style id="tode-injected">html\{background:#101010 !important;\}<\/style><\/head>/);
       assert.match(body, /<body>hi<\/body>/);
+      // and the same rewrite points webviews at the page's own origin
+      const settings = /data-settings="([^"]*)"/.exec(body)[1].replaceAll("&quot;", '"').replaceAll("&amp;", "&");
+      assert.equal(
+        JSON.parse(settings).webviewEndpoint,
+        `http://127.0.0.1:${proxyPort}/static/out/vs/workbench/contrib/webview/browser/pre/`,
+      );
     },
   );
 });
@@ -77,7 +85,7 @@ test("css lands in the html document before the head closes", async () => {
 test("content-length is corrected for the longer body", async () => {
   await withPair(
     (_request, response) => {
-      const body = "<html><head></head><body>hi</body></html>";
+      const body = `<html><head>${MARKER}</head><body>hi</body></html>`;
       response.writeHead(200, { "content-type": "text/html", "content-length": String(body.length) });
       response.end(body);
     },
@@ -102,16 +110,49 @@ test("anything that is not html goes through untouched", async () => {
   );
 });
 
-test("a document with no head still gets the css", async () => {
+test("a workbench document with no head still gets the css", async () => {
   await withPair(
     (_request, response) => {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end("<body>bare</body>");
+      response.end(`<body>${MARKER}bare</body>`);
     },
     async ({ proxyPort }) => {
       const { body } = await get(proxyPort, { accept: "text/html" });
       assert.match(body, /tode-injected/);
       assert.match(body, /bare/);
+    },
+  );
+});
+
+test("html that is not the workbench passes through unstyled", async () => {
+  await withPair(
+    (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end("<html><head></head><body>a webview's content</body></html>");
+    },
+    async ({ proxyPort }) => {
+      const { body } = await get(proxyPort, { accept: "text/html" });
+      assert.doesNotMatch(body, /tode-injected/, "tode's background must not paint webviews");
+      assert.match(body, /a webview's content/);
+    },
+  );
+});
+
+test("the webview boot page is taught to accept its same-origin parent", async () => {
+  const CHECK = "if (hostname === parentOriginHash || hostname.startsWith(parentOriginHash + '.')) {";
+  await withPair(
+    (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(`<html><body><script>${CHECK}}</script></body></html>`);
+    },
+    async ({ proxyPort }) => {
+      const response = await fetch(
+        `http://127.0.0.1:${proxyPort}/static/out/vs/workbench/contrib/webview/browser/pre/index.html`,
+        { headers: { accept: "text/html" } },
+      );
+      const body = await response.text();
+      assert.match(body, /if \(parentOrigin === self\.origin \|\| hostname === parentOriginHash/);
+      assert.doesNotMatch(body, /tode-injected/, "the boot page gets the origin patch, never the css");
     },
   );
 });
@@ -223,7 +264,7 @@ test("the proxy injects css and never a script", async () => {
   await withPair(
     (_request, response) => {
       response.writeHead(200, { "content-type": "text/html", "content-security-policy": CSP });
-      response.end("<html><head></head><body>x</body></html>");
+      response.end(`<html><head>${MARKER}</head><body>x</body></html>`);
     },
     async ({ proxyPort }) => {
       const { body } = await get(proxyPort, { accept: "text/html" });
@@ -305,5 +346,23 @@ test("tode's settings are handed to the workbench in its own document", () => {
     withConfigurationDefaults("<head></head>", { a: 1 }),
     "<head></head>",
     "a document without the tag is left alone",
+  );
+
+  // the webview endpoint rides in the same rewrite, and a server that already
+  // named one keeps its own
+  const unpack = (rewritten) =>
+    JSON.parse(
+      /data-settings="([^"]*)"/.exec(rewritten)[1].replaceAll("&quot;", '"').replaceAll("&amp;", "&"),
+    );
+  const pointed = withConfigurationDefaults(html, {}, "http://127.0.0.1:9/static/pre/");
+  assert.equal(unpack(pointed).webviewEndpoint, "http://127.0.0.1:9/static/pre/");
+  const owned = `<meta id="vscode-workbench-web-configuration" data-settings="${JSON.stringify({
+    webviewEndpoint: "http://theirs/",
+  })
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")}">`;
+  assert.equal(
+    unpack(withConfigurationDefaults(owned, {}, "http://127.0.0.1:9/static/pre/")).webviewEndpoint,
+    "http://theirs/",
   );
 });
