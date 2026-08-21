@@ -3,10 +3,26 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-import { DATA_DIR, LOGS_DIR, STATE_DIR } from "../runtime/paths";
-import { CODE_SERVER_VERSION, ensureCodeServer, installedCodeServer, narrateFetch } from "./vendored";
+import { DATA_DIR, LOGS_DIR, STATE_DIR, WINDOWS } from "../runtime/paths";
+import type { Command } from "../runtime/platform";
+import type { ServerDist } from "./vendored";
+import { SERVER_LABEL, ensureServerDist, installedServer, narrateFetch } from "./vendored";
 
 const VSCODE_DIR = path.join(DATA_DIR, "vscode");
+
+/** Where the profile lives. The reh-web server does not serve out of the
+ * --user-data-dir it is given: it keeps the profile under its server data
+ * directory, as <root>/data/User and <root>/extensions. Pointing --server-data-dir
+ * at VSCODE_DIR is what makes those the very directories tode writes to, so the
+ * extensions it installs are the ones the workbench loads.
+ *
+ * Settings are a different story: the web workbench takes its user settings
+ * from the browser, not from this directory, so what tode wants is handed to
+ * the page instead — see withConfigurationDefaults in inject.ts. */
+export const USER_DATA_DIR = WINDOWS
+  ? path.join(VSCODE_DIR, "data")
+  : path.join(VSCODE_DIR, "user-data");
+const EXTENSIONS_PATH = path.join(VSCODE_DIR, "extensions");
 export const STATE_FILE = path.join(STATE_DIR, "server.json");
 
 export interface ServerState {
@@ -23,6 +39,10 @@ export interface ServerState {
  */
 
 export const CSS_FILE = path.join(DATA_DIR, "inject.css");
+/** The settings the workbench is handed in its document. See
+ * withConfigurationDefaults in inject.ts for why they cannot simply be written
+ * into the profile. */
+export const WEB_CONFIG_FILE = path.join(DATA_DIR, "web-defaults.json");
 // kept apart from the run state, which is cleared on every stop
 export const PORT_FILE = path.join(DATA_DIR, "injector.port");
 
@@ -34,10 +54,148 @@ function fontAsset(): string {
   }
 }
 
-export function codeServerBin(): string {
-  const found = installedCodeServer();
-  if (found) return found;
-  throw new Error(`code-server ${CODE_SERVER_VERSION} not found`);
+export const LOG_FILE = path.join(LOGS_DIR, "code-server.log");
+
+/** Starts something that has to outlive this command, and returns its pid.
+ *
+ * posix detaches and keeps the streams, appending them to tode's log.
+ *
+ * Windows has to be asked differently, because the two obvious answers each
+ * break the other half of what a background editor server needs:
+ *
+ *   detached     the process gets no console at all, so every console program
+ *                *it* forks — the extension host, the file watcher, git — is
+ *                given a console of its own, and a console with no parent is a
+ *                terminal window drawn on top of the editor.
+ *   windowsHide  the process inherits the terminal's console, so nothing new is
+ *                drawn, but closing the pane closes that console and takes the
+ *                server with it.
+ *
+ * What is wanted is a console of its own with no window, which is what
+ * Start-Process -WindowStyle Hidden makes. Its children inherit that console
+ * and so draw nothing either, and it belongs to no terminal, so the pane can
+ * come and go. -PassThru reports the pid, which is what tode records.
+ *
+ * The streams are the price: nothing is redirected, so the editor server writes
+ * its own logs under its data directory, and the injector is handed the log
+ * path and writes there itself. */
+async function startWindowsBackground(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  label: string,
+): Promise<number> {
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  const script = path.join(STATE_DIR, `${label}.start.ps1`);
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(
+    script,
+    `$p = Start-Process -FilePath ${quote(file)} -ArgumentList ${args
+      .map(quote)
+      .join(",")} -WindowStyle Hidden -PassThru
+$p.Id
+`,
+  );
+  const reported = await new Promise<string>((resolve, reject) => {
+    execFile(
+      "powershell",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+      { encoding: "utf8", windowsHide: true, env },
+      (error, stdout, stderr) => {
+        if (error) reject(new Error(stderr.trim() || error.message));
+        else resolve(stdout);
+      },
+    );
+  });
+  const pid = Number(reported.trim().split(/\s+/).pop());
+  if (!pid) throw new Error(`could not start ${label}: the launcher reported no pid`);
+  // kept only when it failed, where it says what was tried
+  fs.rmSync(script, { force: true });
+  return pid;
+}
+
+async function startBackground(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  log: number,
+  label: string,
+): Promise<number> {
+  if (WINDOWS) return startWindowsBackground(file, args, env, label);
+  const child = spawn(file, args, { detached: true, stdio: ["ignore", log, log], env });
+  child.unref();
+  if (!child.pid) throw new Error(`could not start ${label}`);
+  return child.pid;
+}
+
+export function serverCommand(): Command {
+  const found = installedServer();
+  if (found) return found.command;
+  throw new Error(`${SERVER_LABEL} not found`);
+}
+
+/** The flags that start the workbench, per server. code-server takes its own
+ * dialect; the reh-web server takes vscode's. */
+function serveArgs(dist: ServerDist, port: number): string[] {
+  const shared = ["--user-data-dir", USER_DATA_DIR, "--extensions-dir", EXTENSIONS_PATH];
+  if (dist.kind === "reh-web") {
+    return [
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--without-connection-token",
+      "--accept-server-license-terms",
+      "--server-data-dir",
+      VSCODE_DIR,
+      // Undocumented on this server — it is not in --help — but honoured, and
+      // without it a folder opens in restricted mode, where every extension
+      // that is not one of vscode's own stays disabled. That includes tode's
+      // bridge, so nothing answers the quit chord, and tode's theme, so the
+      // workbench ignores the terminal's colours.
+      "--disable-workspace-trust",
+      "--telemetry-level",
+      "off",
+      ...shared,
+    ];
+  }
+  return [
+    "--auth",
+    "none",
+    "--bind-addr",
+    `127.0.0.1:${port}`,
+    ...shared,
+    "--app-name",
+    "tode",
+    "--disable-telemetry",
+    "--disable-update-check",
+    "--disable-workspace-trust",
+    "--disable-getting-started-override",
+    "--ignore-last-opened",
+  ];
+}
+
+/** code-server reads its marketplace out of the environment, so tode points it
+ * at the one vscode itself uses. The reh-web server takes its gallery from the
+ * product.json it shipped with — Open VSX for VSCodium — and honours the
+ * VSCODE_GALLERY_* variables if the user would rather have another one, so
+ * nothing is forced here. */
+function galleryEnv(dist: ServerDist): NodeJS.ProcessEnv {
+  if (dist.kind !== "code-server") return {};
+  return {
+    EXTENSIONS_GALLERY: JSON.stringify({
+      serviceUrl: "https://marketplace.visualstudio.com/_apis/public/gallery",
+      itemUrl: "https://marketplace.visualstudio.com/items",
+      cacheUrl: "https://vscode.blob.core.windows.net/gallery/index",
+      controlUrl: "",
+    }),
+  };
+}
+
+/** The flags every server understands for extension work, so `tode
+ * --install-extension` reaches the same profile the workbench uses. */
+export function extensionArgs(): string[] {
+  return ["--extensions-dir", EXTENSIONS_PATH, "--user-data-dir", USER_DATA_DIR];
 }
 
 function readState(): ServerState | null {
@@ -98,11 +256,16 @@ export async function currentServer(): Promise<ServerState | null> {
   return up && proxied ? state : null;
 }
 
-function serverVersion(bin: string): Promise<string> {
+function serverVersion(command: Command): Promise<string> {
   return new Promise((resolve) => {
-    execFile(bin, ["--version"], { encoding: "utf8" }, (error, stdout) => {
-      resolve(error ? "unknown" : stdout.split("\n")[0].trim());
-    });
+    execFile(
+      command.file,
+      [...command.args, "--version"],
+      { encoding: "utf8", windowsHide: true },
+      (error, stdout) => {
+        resolve(error ? "unknown" : stdout.split("\n")[0].trim());
+      },
+    );
   });
 }
 
@@ -122,55 +285,27 @@ async function startServer(): Promise<ServerState> {
   const existing = await currentServer();
   if (existing) return existing;
 
-  const bin = await ensureCodeServer(narrateFetch(`code-server ${CODE_SERVER_VERSION}`));
+  const dist = await ensureServerDist(narrateFetch(SERVER_LABEL));
   // asked now, awaited after the injector is up — the version is a detail for
   // `tode daemon status`, not something the boot should stall on
-  const version = serverVersion(bin);
+  const version = serverVersion(dist.command);
   const port = await freePort();
   fs.mkdirSync(LOGS_DIR, { recursive: true });
-  const log = fs.openSync(path.join(LOGS_DIR, "code-server.log"), "a");
-  const child = spawn(
-    bin,
-    [
-      "--auth",
-      "none",
-      "--bind-addr",
-      `127.0.0.1:${port}`,
-      "--user-data-dir",
-      path.join(VSCODE_DIR, "user-data"),
-      "--extensions-dir",
-      path.join(VSCODE_DIR, "extensions"),
-      "--app-name",
-      "tode",
-      "--disable-telemetry",
-      "--disable-update-check",
-      "--disable-workspace-trust",
-      "--disable-getting-started-override",
-      "--ignore-last-opened",
-    ],
-    {
-      detached: true,
-      stdio: ["ignore", log, log],
-      env: {
-        ...process.env,
-        EXTENSIONS_GALLERY: JSON.stringify({
-          serviceUrl: "https://marketplace.visualstudio.com/_apis/public/gallery",
-          itemUrl: "https://marketplace.visualstudio.com/items",
-          cacheUrl: "https://vscode.blob.core.windows.net/gallery/index",
-          controlUrl: "",
-        }),
-      },
-    },
+  const log = fs.openSync(LOG_FILE, "a");
+  const pid = await startBackground(
+    dist.command.file,
+    [...dist.command.args, ...serveArgs(dist, port)],
+    { ...process.env, ...galleryEnv(dist) },
+    log,
+    "editor-server",
   );
-  child.unref();
-  if (!child.pid) throw new Error("could not start code-server");
 
   const injector = await startInjector(port, log);
-  void codeServerReady(port, child.pid).then((up) => {
+  void codeServerReady(port, pid).then((up) => {
     if (up) void warmUp(injector.port);
   });
   const state = {
-    pid: child.pid,
+    pid,
     port,
     injectorPid: injector.pid,
     injectorPort: injector.port,
@@ -219,16 +354,17 @@ export async function startInjector(
   // interesting? a script?
   const script = path.join(__dirname, "injector-main.js");
   const font = fontAsset();
-  const child = spawn(process.execPath, [script, String(upstream), String(port), CSS_FILE, font], {
-    detached: true,
-    stdio: ["ignore", log, log],
-  });
-  child.unref();
-  if (!child.pid) throw new Error("could not start the css injector");
+  const pid = await startBackground(
+    process.execPath,
+    [script, String(upstream), String(port), CSS_FILE, font, LOG_FILE, WEB_CONFIG_FILE],
+    process.env,
+    log,
+    "injector",
+  );
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (await answering(port)) return { pid: child.pid, port };
-    if (!running(child.pid)) throw new Error("the css injector exited during start");
+    if (await answering(port)) return { pid, port };
+    if (!running(pid)) throw new Error("the css injector exited during start");
     await sleep(40);
   }
   throw new Error("the css injector did not start within 10s");

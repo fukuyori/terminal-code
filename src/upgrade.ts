@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { DEFAULT_INSTALL_ROOT, INSTALL_ROOT, STATE_DIR } from "./runtime/paths";
+import { DEFAULT_INSTALL_ROOT, INSTALL_ROOT, STATE_DIR, WINDOWS, shimFile } from "./runtime/paths";
+import { extractArchive } from "./runtime/platform";
 import { targetTriple } from "./runtime/release";
 
 const ORIGIN = process.env.TODE_RELEASE_ORIGIN ?? "https://tode.sh/install";
@@ -98,7 +98,7 @@ function swapIn(tarball: string, root: string) {
   const staging = `${root}.new`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
-  execFileSync("tar", ["-xzf", tarball, "-C", staging, "--strip-components", "1"]);
+  extractArchive(tarball, staging, 1);
   if (!fs.existsSync(path.join(staging, "dist", "main.js"))) {
     fs.rmSync(staging, { recursive: true, force: true });
     throw new Error("the new tarball is missing dist/main.js");
@@ -161,14 +161,11 @@ export async function upgrade(options: UpgradeOptions = {}): Promise<Outcome> {
   }
   writeReceipt(build);
 
-  const shim = path.join(
-    process.env.XDG_BIN_HOME ?? path.join(process.env.HOME ?? "", ".local", "bin"),
-    "tode",
-  );
-  const shipped = path.join(INSTALL_ROOT, "bin", "tode");
-  if (fs.existsSync(shim) && fs.existsSync(shipped)) {
+  const shim = shimFile();
+  const shipped = path.join(INSTALL_ROOT, "bin", WINDOWS ? "tode.cmd" : "tode");
+  if (fs.existsSync(shim) && fs.existsSync(shipped) && path.resolve(shim) !== path.resolve(shipped)) {
     fs.copyFileSync(shipped, shim);
-    fs.chmodSync(shim, 0o755);
+    if (!WINDOWS) fs.chmodSync(shim, 0o755);
   }
 
   return { kind: "upgraded", from: here.version, build };

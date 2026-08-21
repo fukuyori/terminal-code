@@ -1,11 +1,11 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { BRIDGE_DIR, STARTUP_OPEN_FILE } from "./bridge";
 import { ipcSocketDir } from "./browserglue";
+import { listEndpoints } from "./ipc";
 import { CSS_FILE, PORT_FILE, STATE_FILE, currentServer, origin } from "./codeserver/server";
-import { CODE_SERVER_VERSION, codeServerRoot, installedCodeServer } from "./codeserver/vendored";
+import { SERVER_LABEL, codeServerRoot, installedServer } from "./codeserver/vendored";
 import {
   EXTENSIONS_DIR,
   KEYBINDINGS_RECORD,
@@ -27,10 +27,11 @@ import {
   STATE_DIR,
   VENDOR_DIR,
 } from "./runtime/paths";
-import { PINNED_VERSION } from "./runtime/release";
+import { WINDOWS, shimFile } from "./runtime/paths";
+import { PINNED_VERSION, localRuntime } from "./runtime/release";
 import { ghosttyConfigDir, isGhostty } from "./shortcuts/backends/ghostty";
 import { isKitty, kittyConfigDir } from "./shortcuts/backends/kitty";
-import { DECISIONS_FILE } from "./shortcuts/store";
+import { DECISIONS_FILE, QUIT_CHORD_FILE } from "./shortcuts/store";
 
 function read(file: string): string | null {
   try {
@@ -54,6 +55,10 @@ function runtimeSources(): string {
   const sources: string[] = [];
   const override = process.env.TODE_TERMINAL_BROWSER_BIN;
   if (override) sources.push(`override via TODE_TERMINAL_BROWSER_BIN at ${override}`);
+  const found = localRuntime();
+  if (found && found.source === "installed") {
+    sources.push(`terminal-browser ${found.version} installed at ${found.root}`);
+  }
   if (fs.existsSync(path.join(VENDOR_DIR, "terminal-browser")))
     sources.push(`vendored in ${path.join(VENDOR_DIR, "terminal-browser")}`);
   if (fs.existsSync(path.join(RUNTIME_DIR, "terminal-browser", PINNED_VERSION)))
@@ -68,17 +73,16 @@ export async function skillText(): Promise<string> {
   const install = version
     ? `release ${version} on channel ${channel ?? "unknown"}`
     : "a working tree, not a release (no VERSION file — upgrade and uninstall refuse it)";
-  const binHome = process.env.XDG_BIN_HOME ?? path.join(os.homedir(), ".local", "bin");
-  const shim = path.join(binHome, "tode");
+  const shim = shimFile();
 
   const server = await currentServer();
   const daemon = server
     ? `up ${Math.round((Date.now() - server.startedAt) / 60000)}m — code-server pid ${server.pid} on 127.0.0.1:${server.port}, ` +
     `injector pid ${server.injectorPid}; windows load ${origin(server)} (always the injector, never code-server directly)`
     : "not running — the next `tode` starts it";
-  const codeServer = installedCodeServer();
+  const codeServer = installedServer();
 
-  const sockets = listDir(ipcSocketDir()).filter((entry) => entry.endsWith(".sock"));
+  const windows = listEndpoints(ipcSocketDir());
   const inWindow = process.env.TODE_IPC;
 
   const extensions = listDir(EXTENSIONS_DIR).filter(
@@ -107,9 +111,9 @@ applied, and the state section is live. Re-run it rather than trusting a copy.
 - install root: ${INSTALL_ROOT} — ${install}
 - shim: ${shim} ${fs.existsSync(shim) ? "(present)" : "(absent — run installs go through node directly)"}
 - terminal-browser pin ${PINNED_VERSION}: ${runtimeSources()}
-- code-server ${CODE_SERVER_VERSION}: ${codeServer ?? `not fetched yet — the first open puts it under ${codeServerRoot()}`}
+- ${SERVER_LABEL}: ${codeServer?.command.file ?? `not fetched yet — the first open puts it under ${codeServerRoot()}`}
 - daemon: ${daemon}
-- open windows: ${sockets.length} socket(s) in ${ipcSocketDir()}${sockets.length ? ` — ${sockets.join(", ")}` : ""}
+- open windows: ${windows.length} in ${ipcSocketDir()}${windows.length ? ` — ${windows.map((w) => w.address).join(", ")}` : ""}
 - this shell ${inWindow ? `is inside a tode window (TODE_IPC=${inWindow})` : "is not inside a tode window (no TODE_IPC)"}
 - terminal detected for shortcut overrides: ${terminals.length ? terminals.join("; ") : "none (ghostty and kitty are supported)"}
 - installed extensions (${extensions.length}): ${extensions.length ? extensions.join(", ") : "none"}
@@ -180,7 +184,7 @@ ${STARTUP_OPEN_FILE} is a one-shot marker with the parts of an open the url cann
   read-only, \`tode --shutdown\` removes it properly.
 - ${PORT_FILE} — the injector's sticky port, reused while free so saved
   workspaces and the chromium cache stay valid.
-- ${path.join(LOGS_DIR, "code-server.log")} — combined code-server + injector log, append-only.
+- ${path.join(LOGS_DIR, "code-server.log")} — ${WINDOWS ? "the injector's log, append-only. Windows starts the editor server with a hidden console rather than redirected streams, so its own logs live under " + path.join(VSCODE_DIR, "server-data") : "combined code-server + injector log, append-only"}.
 - code-server runs with --auth none on 127.0.0.1, user-data ${path.join(VSCODE_DIR, "user-data")},
   extensions ${EXTENSIONS_DIR}.
 
@@ -200,7 +204,9 @@ ${STARTUP_OPEN_FILE} is a one-shot marker with the parts of an open the url cann
 
 - TODE_IPC — set inside tode windows; the window's socket
 - TODE_INSTALL_ROOT — overrides the install tree
-- TODE_CODE_SERVER — use your own code-server binary
+- TODE_CODE_SERVER — use your own editor server (a launcher, or its entry .js)
+- TODE_QUIT_CHORD — the chord that quits, when the terminal owns the default.
+  Set it once and the next open writes it to ${QUIT_CHORD_FILE}
 - TODE_TERMINAL_BROWSER_BIN — use your own terminal-browser
 - TODE_RELEASE_ORIGIN — where upgrades and runtime downloads come from
 - TODE_BROWSER_DATA/_STATE/_CACHE/_RUN/_APPDATA — move the browser homes

@@ -1,19 +1,15 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { MainCtx, PreloadCtx } from "./browser/ctx";
 import { browserMain } from "./browser/mainscript";
 import { preloadMain } from "./browser/preload";
 import { CSS_FILE } from "./codeserver/server";
-import { DATA_DIR } from "./runtime/paths";
+import { DATA_DIR, IPC_DIR } from "./runtime/paths";
+import { THEME_CHOICE_FILE } from "./profile";
 
 export function ipcSocketDir(): string {
-  const stateHome =
-    process.env.XDG_STATE_HOME && path.isAbsolute(process.env.XDG_STATE_HOME)
-      ? process.env.XDG_STATE_HOME
-      : path.join(os.homedir(), ".local", "state");
-  return path.join(stateHome, "tode", "ipc");
+  return IPC_DIR;
 }
 
 /** The browser scripts are authored as typechecked functions in src/browser and
@@ -37,6 +33,7 @@ export function writeBrowserScripts(): { preload: string; mainScript: string } {
   const mainScript = path.join(DATA_DIR, "browser-main.js");
   const ctx: MainCtx = {
     socketDir: ipcSocketDir(),
+    themeChoiceFile: THEME_CHOICE_FILE,
     // the same file `tode timing` reads; the proxy used to write it from a
     // beacon route, now the preload's message lands it here
     timingFile: `${CSS_FILE}.timing.json`,

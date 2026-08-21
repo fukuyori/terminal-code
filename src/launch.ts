@@ -4,6 +4,7 @@ import fs from "node:fs";
 
 import { writeBrowserScripts } from "./browserglue";
 import { CSS_FILE } from "./codeserver/server";
+import { commandWith } from "./runtime/platform";
 import type { Runtime } from "./runtime/release";
 import type { TerminalPalette } from "./terminal/osc";
 
@@ -43,8 +44,10 @@ export class Pane {
         JSON.stringify({ spawnedAt: Date.now(), stages: this.options.stages ?? [] }),
       );
     } catch { }
-    const child = spawn(this.runtime.bin, ["open", ...browserArgv(url, this.options)], {
+    const command = commandWith(this.runtime.command, ["open", ...browserArgv(url, this.options)]);
+    const child = spawn(command.file, command.args, {
       stdio: "inherit",
+      env: { ...process.env, ...(command.env ?? {}) },
     });
     this.child = child;
     this.exit = new Promise<number>((resolve) => {

@@ -50,7 +50,12 @@ export interface ShortcutProvider {
   reloadHint(): string;
 }
 
-const PROVIDERS: ShortcutProvider[] = [ghosttyProvider, kittyProvider];
+/** Both backends read a unix config file and shell out to the terminal's own
+ * binary, so neither has anything to say on Windows yet. An empty list is what
+ * the wizard already treats as "this terminal is not supported", so it prints
+ * that and steps aside rather than failing. */
+const PROVIDERS: ShortcutProvider[] =
+  process.platform === "win32" ? [] : [ghosttyProvider, kittyProvider];
 
 export function providerFor(env: NodeJS.ProcessEnv = process.env): ShortcutProvider | null {
   return PROVIDERS.find((provider) => provider.detect(env)) ?? null;

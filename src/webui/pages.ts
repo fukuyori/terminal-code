@@ -3,6 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
+import { NPM } from "../runtime/platform";
 import type { TerminalPalette } from "../terminal/osc";
 import { cssTokens } from "./tokens";
 
@@ -50,7 +51,7 @@ export function ensurePagesBuilt(): void {
     }
   }
   if (builtAt > Math.max(newestMtime(sources), fs.statSync(config).mtimeMs)) return;
-  execFileSync("npm", ["run", "-s", "build:pages"], { cwd: root, stdio: "ignore" });
+  execFileSync(NPM, ["run", "-s", "build:pages"], { cwd: root, stdio: "ignore", shell: NPM.endsWith(".cmd") });
 }
 
 function pageDir(name: PageName): string {

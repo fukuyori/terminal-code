@@ -1,26 +1,29 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import {
   CSS_FILE,
-  codeServerBin,
   ensureServer,
+  extensionArgs,
   origin,
+  serverCommand,
   stopServer,
 } from "./codeserver/server";
-import { CODE_SERVER_VERSION, ensureCodeServer, narrateFetch } from "./codeserver/vendored";
+import { SERVER_LABEL, ensureServerDist, narrateFetch } from "./codeserver/vendored";
 import { installBridge, requestStartupOpen } from "./bridge";
 import { BOOT_AFTER_APPLY, autoApplyShared, shortcutsCommand } from "./shortcuts/wizard";
 import { importCommand } from "./import/command";
 import { runOnboarding } from "./onboarding";
-import { parseGoto, runningWindow, sendToExtension } from "./ipc";
+import { forgetEndpoint, listEndpoints, parseGoto, runningWindow, sendToExtension } from "./ipc";
 import type { OpenFile } from "./ipc";
-import { EXTENSIONS_DIR, VSCODE_DIR, registerThemeExtension } from "./profile";
+import { registerThemeExtension } from "./profile";
 import {
   ensureFont,
+  forgetThemeChoice,
+  installActiveTheme,
+  selectTodeTheme,
   installCss,
   installKeybindings,
   setLiveTheme,
@@ -28,25 +31,22 @@ import {
   installSettings,
   installTheme,
   readPalette,
+  themeBackground,
 } from "./profile";
 import { Pane, launchBrowser } from "./launch";
 import { resolveRuntime, resolveRuntimeWithProgress } from "./runtime/release";
-import { INSTALL_ROOT } from "./runtime/paths";
+import { INSTALL_ROOT, IPC_DIR, shimFile } from "./runtime/paths";
+import { commandWith } from "./runtime/platform";
 import { skillCommand } from "./skill";
 import { resolveTarget, workbenchUrl } from "./target";
 import { uninstallCommand } from "./uninstall";
 import { upgrade } from "./upgrade";
+import { restoreTerminal } from "./terminal/osc";
 import { hex } from "./theme/color";
 import { generateTheme, semanticColors } from "./theme/generate";
 
-// hm? does it ever get installed at home dir local?
-function shimPath(): string {
-  const binHome = process.env.XDG_BIN_HOME ?? path.join(os.homedir(), ".local", "bin");
-  return path.join(binHome, "tode");
-}
-
 function todeCommand(): string[] {
-  const shim = shimPath();
+  const shim = shimFile();
   if (fs.existsSync(shim)) return [shim];
   return [process.execPath, process.argv[1]];
 }
@@ -54,10 +54,9 @@ function todeCommand(): string[] {
 async function bootEditorUrl(): Promise<string> {
   const { palette } = await readPalette();
   ensureFont();
-  installTheme(palette);
-  installCss(palette);
+  const theme = installActiveTheme(palette);
+  installCss(palette, themeBackground(theme, palette));
   installSettings();
-  setLiveTheme(generateTheme(palette));
   installBridge(todeCommand());
   installKeybindings();
   const server = await ensureServer();
@@ -128,9 +127,12 @@ Commands, each as the first argument:
   --timing              Profile terminal-code launch
   --import [editor]     Bring settings, keybindings, snippets and extensions
                         over from vscode compatible editors
-  --theme [file]        Set editor theme
+  --theme [file]        Set editor theme from a file, or go back to the
+                        terminal's colours when given no file
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
+  --quit                Close the open terminal-code windows
+  --reset-terminal      Put this terminal back after a pane was killed outright
   --shutdown            Stop all terminal-code activities
   --uninstall [--yes]   Remove all terminal-code data from this machine
 `;
@@ -243,13 +245,12 @@ async function openCommand(args: string[]): Promise<number> {
   const target = wanted[0] ?? resolveTarget(undefined, process.cwd());
   const runtime = await resolveRuntimeWithProgress();
   done("runtime");
-  await ensureCodeServer(narrateFetch(`code-server ${CODE_SERVER_VERSION}`));
+  await ensureServerDist(narrateFetch(SERVER_LABEL));
   const { palette } = await readPalette();
   ensureFont();
-  installTheme(palette);
-  installCss(palette);
+  const theme = installActiveTheme(palette);
+  installCss(palette, themeBackground(theme, palette));
   installSettings();
-  setLiveTheme(generateTheme(palette));
   done("profile");
   autoApplyShared();
 
@@ -287,11 +288,11 @@ async function openCommand(args: string[]): Promise<number> {
 }
 
 function extensionCommand(args: string[], quiet = false): number {
-  const result = spawnSync(
-    codeServerBin(),
-    [...args, "--extensions-dir", EXTENSIONS_DIR, "--user-data-dir", path.join(VSCODE_DIR, "user-data")],
-    { stdio: quiet ? ["ignore", "inherit", "ignore"] : "inherit" },
-  );
+  const command = commandWith(serverCommand(), [...args, ...extensionArgs()]);
+  const result = spawnSync(command.file, command.args, {
+    stdio: quiet ? ["ignore", "inherit", "ignore"] : "inherit",
+    windowsHide: true,
+  });
   return result.status ?? 1;
 }
 
@@ -325,10 +326,13 @@ async function themeCommand(file?: string): Promise<number> {
       process.stderr.write(`tode: ${error}\n`);
       return 1;
     }
+    installSettings();
+    selectTodeTheme();
     installBridge(todeCommand());
     process.stdout.write(`theme set from ${file} — open windows follow without a reload\n`);
     return 0;
   }
+  const released = forgetThemeChoice();
   const { palette, source } = await readPalette();
   // slop copy fixme
   const where = {
@@ -345,6 +349,7 @@ async function themeCommand(file?: string): Promise<number> {
   for (const [name, color] of Object.entries(accent)) process.stdout.write(line(name, hex(color)));
   const { changed, fingerprint } = installTheme(palette);
   setLiveTheme(generateTheme(palette));
+  selectTodeTheme();
   installBridge(todeCommand());
   installCss(palette);
   installSettings();
@@ -352,6 +357,7 @@ async function themeCommand(file?: string): Promise<number> {
   process.stdout.write(
     `\ntheme ${fingerprint} ${changed ? "written" : "already current"}\nfont ${ensureFont()}\n`,
   );
+  if (released) process.stdout.write("the theme file you had set is no longer used\n");
   return 0;
 }
 
@@ -404,12 +410,50 @@ function timingCommand(): number {
   return 0;
 }
 
+/** Close the windows without touching the keyboard. The quit chord is the usual
+ * way, but a terminal can hold a chord and never pass it on — and where there is
+ * no wizard to negotiate that, this is the way out that cannot be intercepted.
+ * It also answers the question the chord cannot: a window that is not listed
+ * here has no bridge running, so no chord would have reached it either. */
+async function quitCommand(): Promise<number> {
+  const here = runningWindow();
+  const windows = here ? [{ file: "", address: here }] : listEndpoints(IPC_DIR);
+  if (windows.length === 0) {
+    process.stdout.write(`no tode window is listening in ${IPC_DIR}
+`);
+    return 0;
+  }
+  let quit = 0;
+  for (const window of windows) {
+    await sendToExtension(window.address, { files: [], folders: [], add: false, quit: true })
+      .then(() => {
+        quit += 1;
+      })
+      .catch(() => {
+        if (window.file) forgetEndpoint(window);
+      });
+  }
+  process.stdout.write(
+    quit > 0
+      ? `quit ${quit} window${quit === 1 ? "" : "s"}
+`
+      : `${windows.length} window(s) listed but none answered
+`,
+  );
+  return 0;
+}
+
 async function shutdownCommand(): Promise<number> {
   const stopped = stopServer();
   const runtime = await resolveRuntime().catch(() => null);
   if (runtime) {
     await new Promise<void>((resolve) => {
-      const child = spawn(runtime.bin, ["shutdown"], { stdio: "ignore" });
+      const shutdown = commandWith(runtime.command, ["shutdown"]);
+      const child = spawn(shutdown.file, shutdown.args, {
+        stdio: "ignore",
+        windowsHide: true,
+        env: { ...process.env, ...(shutdown.env ?? {}) },
+      });
       child.on("error", () => resolve());
       child.on("exit", () => resolve());
     });
@@ -485,6 +529,12 @@ async function main(): Promise<number> {
   if (args[0] === "--timing" && args.length === 1) return timingCommand();
   if (args[0] === "--skill") return skillCommand();
   if (args[0] === "--upgrade") return upgradeCommand(args.slice(1));
+  if (args[0] === "--quit") return quitCommand();
+  if (args[0] === "--reset-terminal") {
+    if (restoreTerminal()) return 0;
+    process.stderr.write("tode: --reset-terminal needs to run in a terminal\n");
+    return 1;
+  }
   if (args[0] === "--shutdown") return shutdownCommand();
   if (args[0] === "--uninstall") return uninstallCommand(args.slice(1));
   return openCommand(args);

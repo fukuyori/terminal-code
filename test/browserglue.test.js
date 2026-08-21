@@ -113,9 +113,10 @@ test("a child frame subscribes to themes but stays out of the timing story", asy
 
 const IPC_STUB = "tode-test-ipc";
 
-const mainCtx = (socketDir) => ({
+const mainCtx = (socketDir, themeChoiceFile) => ({
   socketDir,
   timingFile: path.join(socketDir, "timing.json"),
+  themeChoiceFile: themeChoiceFile ?? path.join(socketDir, "no-such-choice.json"),
   modules: {
     livesync: require.resolve("../dist/livesync.js"),
     generate: require.resolve("../dist/theme/generate.js"),
@@ -129,7 +130,11 @@ function loadMainScript(ctx, sendToWindow) {
   let onMessage = null;
   const sandbox = {
     require: (id) => {
-      if (id === IPC_STUB) return { sendToExtension: sendToWindow };
+      if (id === IPC_STUB) {
+        // discovery is the real thing; only the send is stubbed
+        const { listEndpoints, forgetEndpoint } = require("../dist/ipc.js");
+        return { sendToExtension: sendToWindow, listEndpoints, forgetEndpoint };
+      }
       if (id === "electron") {
         return {
           ipcMain: {
@@ -177,6 +182,27 @@ test("the main script themes every window socket", () => {
     assert.equal(plain.add, false);
     assert.equal(typeof plain.theme, "object");
   }
+});
+
+test("a theme file the user chose is not overruled by the terminal's colours", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tode-glue-"));
+  fs.writeFileSync(path.join(dir, "one.sock"), "");
+  const choice = path.join(dir, "theme-choice.json");
+  fs.writeFileSync(choice, JSON.stringify({ file: path.join(dir, "mine.json") }));
+  const onMessage = loadMainScript(mainCtx(dir, choice), () => {
+    throw new Error("a chosen theme must not be overwritten from the terminal");
+  });
+  onMessage(themeMessage());
+
+  // and with the choice gone the terminal is back in charge
+  fs.rmSync(choice, { force: true });
+  const reached = [];
+  const again = loadMainScript(mainCtx(dir, choice), (socket) => {
+    reached.push(socket);
+    return Promise.resolve();
+  });
+  again(themeMessage());
+  assert.equal(reached.length, 1);
 });
 
 test("a dead socket is cleaned up after a refused send", async () => {

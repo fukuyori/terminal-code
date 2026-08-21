@@ -1,21 +1,22 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { spawn } from "node:child_process";
 
 import { stopServer } from "./codeserver/server";
-import { FONT_ASSET, assetPath, userFontsDir } from "./profile";
+import { FONT_ASSET, assetPath, unregisterWindowsFont, userFontsDir } from "./profile";
 import {
   CACHE_DIR,
   DATA_DIR,
   DEFAULT_INSTALL_ROOT,
   INSTALL_ROOT,
-  RUNTIME_DIR,
   STATE_DIR,
-  VENDOR_DIR,
+  WINDOWS,
+  shimFile,
 } from "./runtime/paths";
-import { PINNED_VERSION } from "./runtime/release";
+import { commandWith } from "./runtime/platform";
+import { localRuntime } from "./runtime/release";
 import { ghosttyConfigDir, reloadGhostty, removeFreed } from "./shortcuts/backends/ghostty";
 
 
@@ -29,18 +30,54 @@ function confirm(question: string): Promise<boolean> {
   });
 }
 
-function localBrowserBin(): string | null {
-  const candidates = [
-    path.join(VENDOR_DIR, "terminal-browser", "bin", "terminal-browser"),
-    path.join(RUNTIME_DIR, "terminal-browser", PINNED_VERSION, "bin", "terminal-browser"),
-  ];
-  return candidates.find((bin) => fs.existsSync(bin)) ?? null;
-}
+const stubborn: string[] = [];
 
+/** Windows keeps a handle on the batch file it is currently running and on
+ * anything a live process opened, so a tree can refuse to go. That is worth
+ * saying at the end rather than aborting halfway through the uninstall. */
 function removeDir(dir: string): boolean {
   if (!fs.existsSync(dir)) return false;
-  fs.rmSync(dir, { recursive: true, force: true });
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    stubborn.push(dir);
+    return false;
+  }
   return true;
+}
+
+/** The user PATH entry the Windows install added for bin\tode.cmd.
+ *
+ * The registry is edited rather than [Environment]::SetEnvironmentVariable,
+ * which writes the value back as a plain REG_SZ: a user PATH held as
+ * REG_EXPAND_SZ would lose its %USERPROFILE% and friends, expanded once and
+ * frozen. Reading with DoNotExpandEnvironmentNames and writing back with the
+ * kind it already had leaves everything else exactly as it was. */
+function removeFromUserPath(entry: string): void {
+  if (!WINDOWS) return;
+  const script = `
+$wanted = $env:TODE_PATH_ENTRY.TrimEnd('\')
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+if ($key -eq $null) { exit 0 }
+try {
+  $kind = try { $key.GetValueKind('Path') } catch { exit 0 }
+  $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+  $entries = $raw.Split(';') | Where-Object { $_ }
+  $kept = $entries | Where-Object { $_.TrimEnd('\') -ine $wanted }
+  if (($kept | Measure-Object).Count -ne ($entries | Measure-Object).Count) {
+    $key.SetValue('Path', ($kept -join ';'), $kind)
+  }
+} finally {
+  $key.Close()
+}
+`;
+  try {
+    execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+      stdio: "ignore",
+      windowsHide: true,
+      env: { ...process.env, TODE_PATH_ENTRY: entry },
+    });
+  } catch {}
 }
 
 function removeFont(): boolean {
@@ -50,6 +87,7 @@ function removeFont(): boolean {
     const ours = fs.readFileSync(assetPath(FONT_ASSET));
     if (!theirs.equals(ours)) return false;
     fs.rmSync(target, { force: true });
+    unregisterWindowsFont();
     return true;
   } catch {
     return false;
@@ -57,11 +95,7 @@ function removeFont(): boolean {
 }
 
 function removeShim(): boolean {
-  const binHome =
-    process.env.XDG_BIN_HOME && path.isAbsolute(process.env.XDG_BIN_HOME)
-      ? process.env.XDG_BIN_HOME
-      : path.join(os.homedir(), ".local", "bin");
-  const shim = path.join(binHome, "tode");
+  const shim = shimFile();
   try {
     const contents = fs.readFileSync(shim, "utf8");
     if (!contents.includes("TODE_INSTALL_ROOT")) return false;
@@ -99,27 +133,42 @@ export async function uninstallCommand(args: string[]): Promise<number> {
   const stop = spinner("uninstalling");
 
   stopServer();
-  const browser = localBrowserBin();
+  const browser = localRuntime();
   if (browser) {
+    const shutdown = commandWith(browser.command, ["shutdown"]);
     await new Promise<void>((resolve) => {
-      const child = spawn(browser, ["shutdown"], { stdio: "ignore" });
+      const child = spawn(shutdown.file, shutdown.args, {
+        stdio: "ignore",
+        windowsHide: true,
+        env: { ...process.env, ...(shutdown.env ?? {}) },
+      });
       child.on("error", () => resolve());
       child.on("exit", () => resolve());
     });
   }
 
-  if (removeFreed(ghosttyConfigDir())) reloadGhostty();
+  if (!WINDOWS && removeFreed(ghosttyConfigDir())) reloadGhostty();
 
   removeFont();
 
   for (const dir of [DATA_DIR, STATE_DIR, CACHE_DIR]) removeDir(dir);
 
   for (const root of new Set([INSTALL_ROOT, DEFAULT_INSTALL_ROOT])) {
-    if (fs.existsSync(path.join(root, "VERSION"))) removeDir(root);
+    if (fs.existsSync(path.join(root, "VERSION"))) {
+      removeFromUserPath(path.join(root, "bin"));
+      removeDir(root);
+    }
   }
   removeShim();
 
   stop();
+  if (stubborn.length > 0) {
+    process.stdout.write(
+      `done, except for ${stubborn.length} in-use path(s) — remove them once this shell is closed:\n`,
+    );
+    for (const dir of stubborn) process.stdout.write(`  ${dir}\n`);
+    return 0;
+  }
   process.stdout.write("done\n");
   return 0;
 }

@@ -13,11 +13,51 @@ import net from "node:net";
  * (--open-tabs-in-popup-stack). */
 export const FONT_ROUTE = "/__tode/font.ttf";
 
+/** The workbench's own settings, handed to it in the document.
+ *
+ * A vscode server serves the web workbench its user settings from the browser,
+ * not from the profile directory on disk — so the settings.json tode writes is
+ * read by the cli and by nothing else, and the theme, the font and the rest of
+ * it never reach the page. What the page does take is
+ * `configurationDefaults` in its construction options, which lands in the
+ * default layer: tode's answers apply, and anything the user changes in the
+ * editor still wins over them, which is the right way round.
+ *
+ * The options travel HTML-escaped in a meta tag, so they are unescaped, merged
+ * and escaped back. Anything unexpected leaves the document alone. */
+const WEB_CONFIGURATION =
+  /(id="vscode-workbench-web-configuration"[^>]*?data-settings=")([^"]*)(")/;
+
+const unescapeAttribute = (value: string) =>
+  value.replaceAll("&quot;", '"').replaceAll("&amp;", "&");
+const escapeAttribute = (value: string) =>
+  value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+
+export function withConfigurationDefaults(
+  html: string,
+  defaults: Record<string, unknown>,
+): string {
+  if (Object.keys(defaults).length === 0) return html;
+  return html.replace(WEB_CONFIGURATION, (all, head: string, body: string, tail: string) => {
+    let options: Record<string, unknown>;
+    try {
+      options = JSON.parse(unescapeAttribute(body)) as Record<string, unknown>;
+    } catch {
+      return all;
+    }
+    if (!options || typeof options !== "object") return all;
+    const existing = (options.configurationDefaults ?? {}) as Record<string, unknown>;
+    options.configurationDefaults = { ...defaults, ...existing };
+    return head + escapeAttribute(JSON.stringify(options)) + tail;
+  });
+}
+
 export function createInjector(
   upstreamPort: number,
   cssFile: string,
   fontFile?: string,
   holdMs = 20_000,
+  configFile?: string,
 ): http.Server {
   const upstreamHost = `127.0.0.1:${upstreamPort}`;
 
@@ -26,6 +66,16 @@ export function createInjector(
       return fs.readFileSync(cssFile, "utf8");
     } catch {
       return "";
+    }
+  };
+
+  const readDefaults = (): Record<string, unknown> => {
+    if (!configFile) return {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(configFile, "utf8"));
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
     }
   };
 
@@ -87,9 +137,10 @@ export function createInjector(
         from.on("end", () => {
           const body = Buffer.concat(chunks).toString("utf8");
           const style = `<style id="tode-injected">${css}</style>`;
-          const patched = body.includes("</head>")
-            ? body.replace("</head>", `${style}</head>`)
-            : `${style}${body}`;
+          const settled = withConfigurationDefaults(body, readDefaults());
+          const patched = settled.includes("</head>")
+            ? settled.replace("</head>", `${style}</head>`)
+            : `${style}${settled}`;
           const out = Buffer.from(patched, "utf8");
           const headers = { ...from.headers, "content-length": String(out.byteLength) };
           delete headers["content-encoding"];

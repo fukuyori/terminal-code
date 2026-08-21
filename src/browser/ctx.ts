@@ -5,6 +5,9 @@ export type PreloadCtx = Record<string, never>;
 export interface MainCtx {
   socketDir: string;
   timingFile: string;
+  /** the marker written when the user picked a theme file: while it is there,
+   * the terminal's colours are not the ones in charge */
+  themeChoiceFile: string;
   modules: {
     livesync: string;
     generate: string;

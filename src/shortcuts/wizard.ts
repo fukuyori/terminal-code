@@ -8,6 +8,7 @@ import { DATA_DIR } from "../runtime/paths";
 import { resolveRuntimeWithProgress } from "../runtime/release";
 import { extensionHolder, importedConflicts, importedHolder } from "./imported";
 import { wrap } from "./prompt";
+import { commandWith } from "../runtime/platform";
 import { providerFor } from "./provider";
 import type { ProviderConflict, ShortcutProvider } from "./provider";
 import { QUIT_CHORD, clearDecisions, loadDecisions, saveDecisions } from "./store";
@@ -508,15 +509,15 @@ async function runManager(
     return opened.state;
   }
   const runtime = await resolveRuntimeWithProgress();
-  const child = spawn(
-    runtime.bin,
-    [
-      "open",
-      `http://127.0.0.1:${manager.port}`,
-      "--app-mode"
-    ],
-    { stdio: "inherit" },
-  );
+  const command = commandWith(runtime.command, [
+    "open",
+    `http://127.0.0.1:${manager.port}`,
+    "--app-mode",
+  ]);
+  const child = spawn(command.file, command.args, {
+    stdio: "inherit",
+    env: { ...process.env, ...(command.env ?? {}) },
+  });
   void manager.done.then(() => {
     if (!state.navigated) child.kill("SIGTERM");
   });

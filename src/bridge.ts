@@ -4,7 +4,9 @@ import path from "node:path";
 import type { BridgeCtx } from "./bridge/ctx";
 import { bridgeMain } from "./bridge/extension";
 import type { OpenRequest } from "./ipc";
-import { DATA_DIR } from "./runtime/paths";
+import { DATA_DIR, IPC_DIR } from "./runtime/paths";
+import { THEME_NAME } from "./theme/generate";
+import { uriPath } from "./runtime/platform";
 import { EXTENSIONS_DIR, LIVE_THEME_FILE } from "./profile";
 import {
   IMPORT_DECISION_ID,
@@ -99,6 +101,8 @@ export function installBridge(tode: string[]): boolean {
     path.join(BRIDGE_DIR, "extension.js"),
     bridgeSource({
       tode,
+      ipcDir: IPC_DIR,
+      themeName: THEME_NAME,
       liveThemeFile: LIVE_THEME_FILE,
       quitHint: quitHintMessage(),
       startupOpenFile: STARTUP_OPEN_FILE,
@@ -129,7 +133,7 @@ export function registerBridge(): void {
     identifier: { id: BRIDGE_ID },
     version: BRIDGE_VERSION,
     relativeLocation: path.basename(BRIDGE_DIR),
-    location: { $mid: 1, path: BRIDGE_DIR, scheme: "file" },
+    location: { $mid: 1, path: uriPath(BRIDGE_DIR), scheme: "file" },
     metadata: { isApplicationScoped: false, isMachineScoped: false, installedTimestamp: 0 },
   };
   const without = listed.filter((item) => item.identifier?.id !== BRIDGE_ID);

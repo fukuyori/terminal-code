@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+
+import { copyTree as copyRecursive } from "../runtime/platform";
 
 import { parseJsonc, setKeys } from "../jsonc";
 import {
@@ -24,18 +25,8 @@ export interface ImportReport {
 function copyTree(from: string, to: string): boolean {
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.rmSync(to, { recursive: true, force: true });
-  try {
-    // clones rather than copies on apfs, which matters for hundreds of megabytes
-    execFileSync("cp", ["-Rc", from, to], { stdio: "ignore" });
-    return true;
-  } catch {
-    try {
-      execFileSync("cp", ["-R", from, to], { stdio: "ignore" });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  // clones rather than copies on apfs, which matters for hundreds of megabytes
+  return copyRecursive(from, to);
 }
 
 function importSettings(editor: Editor): ImportReport["settings"] {

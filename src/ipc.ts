@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 
 export interface OpenFile {
   path: string;
@@ -15,16 +16,63 @@ export interface OpenRequest {
   diff?: string[];
   view?: string;
   theme?: Record<string, unknown>;
+  /** close the window this reaches, the same way the quit chord does */
+  quit?: boolean;
+}
+
+/** Windows has no socket in the filesystem, so a window advertises itself with a
+ * small file naming the pipe it listens on. Everywhere else the file in the ipc
+ * directory is the socket. */
+export function isPipeName(endpoint: string): boolean {
+  return endpoint.startsWith("\\\\.\\pipe\\") || endpoint.startsWith("\\\\?\\pipe\\");
 }
 
 export function runningWindow(): string | null {
-  const socket = process.env.TODE_IPC;
-  if (!socket) return null;
+  const endpoint = process.env.TODE_IPC;
+  if (!endpoint) return null;
+  if (isPipeName(endpoint)) return endpoint;
   try {
-    return fs.statSync(socket).isSocket() ? socket : null;
+    return fs.statSync(endpoint).isSocket() ? endpoint : null;
   } catch {
     return null;
   }
+}
+
+export interface Endpoint {
+  /** the entry in the ipc directory, removed when the window turns out to be gone */
+  file: string;
+  /** what net.connect takes: a socket path, or a pipe name */
+  address: string;
+}
+
+/** Every window currently advertising itself. */
+export function listEndpoints(dir: string): Endpoint[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const found: Endpoint[] = [];
+  for (const name of names) {
+    const file = path.join(dir, name);
+    if (name.endsWith(".sock")) {
+      found.push({ file, address: file });
+      continue;
+    }
+    if (!name.endsWith(".pipe")) continue;
+    try {
+      const address = fs.readFileSync(file, "utf8").trim();
+      if (address) found.push({ file, address });
+    } catch {}
+  }
+  return found;
+}
+
+export function forgetEndpoint(endpoint: Endpoint): void {
+  try {
+    fs.rmSync(endpoint.file, { force: true });
+  } catch {}
 }
 
 export function sendToExtension(socket: string, request: OpenRequest, timeoutMs = 4000): Promise<void> {

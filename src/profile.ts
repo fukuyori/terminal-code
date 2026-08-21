@@ -3,11 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { CSS_FILE } from "./codeserver/server";
+import { CSS_FILE, USER_DATA_DIR, WEB_CONFIG_FILE } from "./codeserver/server";
 import { FONT_FALLBACKS, injectedCss } from "./codeserver/inject";
 import { parseJsonc, readKey, setKeys } from "./jsonc";
-import { DATA_DIR } from "./runtime/paths";
-import { CLAIM_DECISION_ID, IMPORT_DECISION_ID, QUIT_CHORD, QUIT_COMMAND, claimBindings, fallbackBindings, hintBindings, loadDecisions, overrideBindings, quitBindings, quitWhen, decisionsStamp } from "./shortcuts/store";
+import { DATA_DIR, WINDOWS } from "./runtime/paths";
+import { uriPath } from "./runtime/platform";
+import { CLAIM_DECISION_ID, IMPORT_DECISION_ID, QUIT_CHORD, QUIT_COMMAND, claimBindings, fallbackBindings, hintBindings, loadDecisions, overrideBindings, quitBindings, quitWhen, rememberQuitChord, decisionsStamp } from "./shortcuts/store";
 import { queryTerminal, withFallbacks } from "./terminal/osc";
 import type { ParsedReplies, TerminalPalette } from "./terminal/osc";
 import { hex } from "./theme/color";
@@ -19,7 +20,7 @@ import {
 } from "./theme/generate";
 
 export const VSCODE_DIR = path.join(DATA_DIR, "vscode");
-export const USER_DIR = path.join(VSCODE_DIR, "user-data", "User");
+export const USER_DIR = path.join(USER_DATA_DIR, "User");
 export const EXTENSIONS_DIR = path.join(VSCODE_DIR, "extensions");
 export const THEME_EXTENSION_ID = "tode.tode-theme";
 
@@ -62,6 +63,13 @@ export const FONT_ASSET = FONT_FILE;
 // interesting, we actually install the font at a legimate location?
 export function userFontsDir(): string {
   if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Fonts");
+  if (WINDOWS) {
+    const local =
+      process.env.LOCALAPPDATA && path.isAbsolute(process.env.LOCALAPPDATA)
+        ? process.env.LOCALAPPDATA
+        : path.join(os.homedir(), "AppData", "Local");
+    return path.join(local, "Microsoft", "Windows", "Fonts");
+  }
   const dataHome =
     process.env.XDG_DATA_HOME && path.isAbsolute(process.env.XDG_DATA_HOME)
       ? process.env.XDG_DATA_HOME
@@ -69,12 +77,54 @@ export function userFontsDir(): string {
   return path.join(dataHome, "fonts");
 }
 
+/** The name Windows lists a per-user font under. */
+const FONT_REGISTRY_KEY = [
+  "HKCU",
+  "SOFTWARE",
+  "Microsoft",
+  "Windows NT",
+  "CurrentVersion",
+  "Fonts",
+].join(path.win32.sep);
+const FONT_REGISTRY_VALUE = `${FONT_FAMILY} (TrueType)`;
+
+/** Copying a ttf into the per-user font directory is not enough on Windows: the
+ * font only becomes available to applications once it is listed in the registry.
+ * The workbench does not depend on this — the css injector serves the same file
+ * over @font-face — so a failure here is not worth reporting. */
+function registerWindowsFont(target: string): void {
+  try {
+    execFileSync(
+      "reg",
+      ["add", FONT_REGISTRY_KEY, "/v", FONT_REGISTRY_VALUE, "/t", "REG_SZ", "/d", target, "/f"],
+      { stdio: "ignore", windowsHide: true },
+    );
+  } catch {}
+}
+
+export function unregisterWindowsFont(): void {
+  if (!WINDOWS) return;
+  try {
+    execFileSync("reg", ["delete", FONT_REGISTRY_KEY, "/v", FONT_REGISTRY_VALUE, "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+  } catch {}
+}
+
 export function ensureFont(): "installed" | "present" {
   const target = path.join(userFontsDir(), FONT_FILE);
   if (fs.existsSync(target)) return "present";
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(assetPath(FONT_FILE), target);
-  if (process.platform !== "darwin") {
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(assetPath(FONT_FILE), target);
+  } catch {
+    // an unwritable font directory is survivable: the page gets the font from
+    // the injector either way
+    return "present";
+  }
+  if (WINDOWS) registerWindowsFont(target);
+  else if (process.platform !== "darwin") {
     try {
       execFileSync("fc-cache", ["-f", path.dirname(target)], { stdio: "ignore" });
     } catch { }
@@ -231,7 +281,7 @@ export function registerThemeExtension(dir?: string): void {
     identifier: { id: THEME_EXTENSION_ID },
     version: "1.0.0",
     relativeLocation: folder,
-    location: { $mid: 1, path: themeDir, scheme: "file" },
+    location: { $mid: 1, path: uriPath(themeDir), scheme: "file" },
     metadata: { isApplicationScoped: false, isMachineScoped: false, installedTimestamp: 0 },
   };
   const without = listed.filter((item) => item.identifier?.id !== entry.identifier.id);
@@ -241,7 +291,6 @@ export function registerThemeExtension(dir?: string): void {
 const FONT_STACK = `"${FONT_FAMILY}", ${FONT_FALLBACKS}`;
 
 export const SETTINGS: Record<string, unknown> = {
-  "workbench.colorTheme": THEME_NAME,
   "editor.fontFamily": FONT_STACK,
   "terminal.integrated.fontFamily": FONT_STACK,
   "chat.editor.fontFamily": FONT_STACK,
@@ -265,11 +314,19 @@ export const SETTINGS: Record<string, unknown> = {
   // huh?
   "terminal.integrated.smoothScrolling": false,
   "update.mode": "none",
+  // the server flag that turns this off is code-server's; the reh-web server
+  // takes it as a setting instead, and it is the same answer on both
+  "security.workspace.trust.enabled": false,
   "telemetry.telemetryLevel": "off",
   "workbench.enableExperiments": false,
 };
 
 export const SEEDED_SETTINGS: Record<string, unknown> = {
+  // Seeded, not managed: tode picks its own theme the first time and then stays
+  // out of the way. Changing the colour theme in the editor is a thing people
+  // do, and rewriting this on every open would undo it a second later — which
+  // is exactly what it used to do.
+  "workbench.colorTheme": THEME_NAME,
   "workbench.activityBar.location": "top",
   "editor.fontSize": 13,
   "workbench.tree.indent": 12,
@@ -278,15 +335,35 @@ export const SEEDED_SETTINGS: Record<string, unknown> = {
   "scm.defaultViewMode": "tree",
 };
 
-export function installCss(palette: TerminalPalette): boolean {
-  return writeIfChanged(CSS_FILE, injectedCss(hex(palette.background), FONT_FAMILY));
+export function installCss(palette: TerminalPalette, background?: string): boolean {
+  return writeIfChanged(CSS_FILE, injectedCss(background ?? hex(palette.background), FONT_FAMILY));
 }
 
 export function setLiveTheme(theme: ThemeDocument): boolean {
   return writeIfChanged(LIVE_THEME_FILE, `${JSON.stringify(theme)}\n`);
 }
 
-export function setThemeFile(file: string): string | null {
+/** The theme file the user asked for, if they asked for one. Every open would
+ * otherwise regenerate the theme from the terminal's colours, which is what
+ * `tode --theme <file>` is asking not to happen. */
+export const THEME_CHOICE_FILE = path.join(DATA_DIR, "theme-choice.json");
+
+function readThemeChoice(): string | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(THEME_CHOICE_FILE, "utf8")) as { file?: string };
+    return parsed.file || null;
+  } catch {
+    return null;
+  }
+}
+
+export function forgetThemeChoice(): boolean {
+  if (!readThemeChoice()) return false;
+  fs.rmSync(THEME_CHOICE_FILE, { force: true });
+  return true;
+}
+
+function readThemeDocument(file: string): ThemeDocument | string {
   let source: string;
   try {
     source = fs.readFileSync(file, "utf8");
@@ -297,9 +374,49 @@ export function setThemeFile(file: string): string | null {
   if (!theme || typeof theme !== "object" || (!theme.colors && !theme.tokenColors)) {
     return `${file} is not a vscode theme (expected a json document with colors or tokenColors)`;
   }
+  return theme;
+}
+
+export function setThemeFile(file: string): string | null {
+  const theme = readThemeDocument(file);
+  if (typeof theme === "string") return theme;
   installThemeJson(theme, themeFingerprint(theme));
   setLiveTheme(theme);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(
+    THEME_CHOICE_FILE,
+    `${JSON.stringify({ file: path.resolve(file) }, null, 2)}
+`,
+  );
   return null;
+}
+
+/** What the editor should be wearing right now: the chosen file if there is one
+ * and it still reads, and the terminal's own colours otherwise. A file that has
+ * gone away is not an error — the terminal is always there to fall back on. */
+export function installActiveTheme(palette: TerminalPalette): ThemeDocument {
+  const chosen = readThemeChoice();
+  if (chosen) {
+    const theme = readThemeDocument(chosen);
+    if (typeof theme !== "string") {
+      installThemeJson(theme, themeFingerprint(theme));
+      setLiveTheme(theme);
+      return theme;
+    }
+  }
+  const theme = generateTheme(palette);
+  installThemeJson(theme, paletteFingerprint(palette));
+  setLiveTheme(theme);
+  return theme;
+}
+
+/** What the page should be painted with before the workbench has drawn: the
+ * theme's own editor background, so a chosen theme does not flash the
+ * terminal's colour first. */
+export function themeBackground(theme: ThemeDocument, palette: TerminalPalette): string {
+  const colour = theme.colors?.["editor.background"];
+  if (typeof colour === "string" && /^#[0-9a-f]{6}/i.test(colour)) return colour.slice(0, 7);
+  return hex(palette.background);
 }
 
 export function managedSettings(): Record<string, unknown> {
@@ -313,13 +430,41 @@ export function applySettings(source: string): string {
   return setKeys(setKeys(source, absent), SETTINGS);
 }
 
+/** Point the workbench back at tode's own theme. `--theme` is an explicit ask
+ * for it, and the user may have picked something else in the meantime. */
+export function selectTodeTheme(): boolean {
+  const file = path.join(USER_DIR, "settings.json");
+  let source = "";
+  try {
+    source = fs.readFileSync(file, "utf8");
+  } catch {}
+  return writeIfChanged(file, setKeys(source || "{}", { "workbench.colorTheme": THEME_NAME }));
+}
+
 export function installSettings(): boolean {
+  // The web workbench never reads this file — see installWebDefaults — but the
+  // cli does, for --install-extension and for anything run against the profile
+  // directly, so it stays the record of what tode asked for.
   const file = path.join(USER_DIR, "settings.json");
   let source = "";
   try {
     source = fs.readFileSync(file, "utf8");
   } catch { }
-  return writeIfChanged(file, applySettings(source || "{}"));
+  const wrote = writeIfChanged(file, applySettings(source || "{}"));
+  return installWebDefaults() || wrote;
+}
+
+/** What the page is given as its default settings. Everything tode has an
+ * opinion about goes in, managed and seeded alike: in the default layer the
+ * distinction stops mattering, since a value the user changes in the editor
+ * beats a default without tode having to stay out of its way. */
+export function webDefaults(): Record<string, unknown> {
+  return { ...SEEDED_SETTINGS, ...SETTINGS };
+}
+
+export function installWebDefaults(): boolean {
+  return writeIfChanged(WEB_CONFIG_FILE, `${JSON.stringify(webDefaults(), null, 2)}
+`);
 }
 
 export function builtinKeybindings(): Binding[] {
@@ -403,6 +548,7 @@ export function foreignBindings(): Binding[] {
 }
 
 export function installKeybindings(): boolean {
+  rememberQuitChord();
   return writeBindings(todeKeybindings() as Binding[], foreignBindings());
 }
 

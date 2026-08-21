@@ -201,12 +201,19 @@ test("seeded settings fill gaps but never overwrite what is already there", () =
   assert.equal(readKey(chosen, "workbench.activityBar.location"), "default");
 });
 
-test("managed settings always win, even over an import", () => {
+test("managed settings always win, even over an import — but the theme is not one of them", () => {
   const { applySettings } = require("../dist/profile.js");
   const { readKey } = require("../dist/jsonc.js");
-  const out = applySettings(`{"workbench.colorTheme": "Monokai", "editor.tabSize": 8}`);
-  assert.equal(readKey(out, "workbench.colorTheme"), "Terminal Code");
-  assert.equal(readKey(out, "editor.tabSize"), 8);
+  const out = applySettings(
+    `{"workbench.colorTheme": "Monokai", "window.title": "mine", "editor.tabSize": 8}`,
+  );
+  assert.equal(readKey(out, "window.title"), "${dirty}${activeEditorShort}", "managed keys win");
+  assert.equal(readKey(out, "editor.tabSize"), 8, "unknown keys are left alone");
+  assert.equal(
+    readKey(out, "workbench.colorTheme"),
+    "Monokai",
+    "the colour theme is seeded once and then belongs to whoever changed it",
+  );
 });
 
 test("installing keybindings never eats the ones already in the file", () => {
@@ -355,7 +362,7 @@ test("open requests reach a listening window", async () => {
   const os = require("node:os");
   const path = require("node:path");
   const { sendToExtension } = require("../dist/ipc.js");
-  const sock = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tode-ipc-")), "w.sock");
+  const sock = ipcAddress(fs.mkdtempSync(path.join(os.tmpdir(), "tode-ipc-")), "w");
   const seen = [];
   const server = net.createServer((c) => {
     let buf = "";
@@ -381,7 +388,7 @@ test("a window that refuses is reported, not swallowed", async () => {
   const os = require("node:os");
   const path = require("node:path");
   const { sendToExtension } = require("../dist/ipc.js");
-  const sock = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tode-ipc-")), "w.sock");
+  const sock = ipcAddress(fs.mkdtempSync(path.join(os.tmpdir(), "tode-ipc-")), "w");
   const server = net.createServer((c) => c.end(JSON.stringify({ ok: false, error: "nope" }) + "\n"));
   await new Promise((r) => server.listen(sock, r));
   try {
@@ -605,3 +612,307 @@ test("a partial palette answer keeps its slots but is never authoritative", () =
   assert.equal(resolvePalette(null, cached).source, "cache");
   assert.equal(resolvePalette(null, null).source, "default");
 });
+
+test("a quit request reaches the window and the bridge acts on it", async () => {
+  const net = require("node:net");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const vm = require("node:vm");
+  const { sendToExtension } = require("../dist/ipc.js");
+  const { bridgeSource } = require("../dist/bridge.js");
+
+  // the real generated extension, with the parts of vscode the quit path uses
+  const opened = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tode-quit-ipc-"));
+  const address = ipcAddress(dir, "w");
+  let activate = null;
+  const sandbox = {
+    process,
+    console,
+    module: { exports: {} },
+    require: (id) => {
+      if (id !== "vscode") return require(id);
+      return {
+        Uri: { parse: (target) => ({ toString: () => target }) },
+        commands: { registerCommand: () => ({ dispose() {} }) },
+        env: {
+          openExternal: (uri) => {
+            opened.push(uri.toString());
+            return Promise.resolve(true);
+          },
+        },
+        window: { showErrorMessage: () => Promise.resolve(undefined) },
+        workspace: { getConfiguration: () => ({ update() {} }) },
+      };
+    },
+  };
+  sandbox.exports = sandbox.module.exports;
+  vm.runInNewContext(
+    bridgeSource({
+      tode: ["tode"],
+      ipcDir: dir,
+      liveThemeFile: path.join(dir, "live-theme.json"),
+      quitHint: "press it",
+      startupOpenFile: path.join(dir, "startup.json"),
+    }),
+    sandbox,
+  );
+  activate = sandbox.module.exports.activate;
+  assert.equal(typeof activate, "function");
+
+  // the bridge picks its own endpoint; a listener on ours stands in for it
+  const NL = String.fromCharCode(10);
+  const requests = [];
+  const server = net.createServer((connection) => {
+    connection.on("data", (chunk) => {
+      requests.push(JSON.parse(chunk.toString("utf8").split(NL)[0]));
+      connection.end(JSON.stringify({ ok: true }) + NL);
+    });
+  });
+  await new Promise((r) => server.listen(address, r));
+  try {
+    await sendToExtension(address, { files: [], folders: [], add: false, quit: true });
+    assert.equal(requests[0].quit, true, "quit travels over the wire");
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the colour theme is the user's to change, and tode takes its colours back off", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const vm = require("node:vm");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tode-theme-own-"));
+  const prev = { data: process.env.XDG_DATA_HOME, state: process.env.XDG_STATE_HOME };
+  process.env.XDG_DATA_HOME = path.join(home, "share");
+  process.env.XDG_STATE_HOME = path.join(home, "state");
+  for (const key of Object.keys(require.cache)) delete require.cache[key];
+  try {
+    const { applySettings, USER_DIR } = require("../dist/profile.js");
+    const { readKey } = require("../dist/jsonc.js");
+    const { bridgeSource } = require("../dist/bridge.js");
+    const { THEME_NAME } = require("../dist/theme/generate.js");
+
+    // seeded, not managed: the first run picks tode's theme...
+    assert.equal(readKey(applySettings("{}"), "workbench.colorTheme"), THEME_NAME);
+    // ...and a later run leaves the user's choice alone
+    const theirs = applySettings(`{"workbench.colorTheme": "Monokai"}`);
+    assert.equal(readKey(theirs, "workbench.colorTheme"), "Monokai", "the choice survives an open");
+
+    // the bridge stops painting over it, and clears what it painted before
+    const settings = new Map([
+      ["workbench.colorTheme", "Monokai"],
+      ["workbench.colorCustomizations", { "editor.background": "#000000" }],
+      ["editor.tokenColorCustomizations", { textMateRules: [] }],
+    ]);
+    const updates = [];
+    let onConfigChange = null;
+    const sandbox = {
+      process,
+      console,
+      module: { exports: {} },
+      require: (id) => {
+        if (id !== "vscode") return require(id);
+        return {
+          ConfigurationTarget: { Global: 1 },
+          Uri: { parse: (t) => ({ toString: () => t }) },
+          commands: { registerCommand: () => ({ dispose() {} }) },
+          env: { openExternal: () => Promise.resolve(true) },
+          window: { showErrorMessage: () => Promise.resolve() },
+          workspace: {
+            getConfiguration: () => ({
+              get: (key) => settings.get(key),
+        inspect: (key) => ({ globalValue: settings.get(key) }),
+              update: (key, value) => {
+                updates.push([key, value]);
+                if (value === undefined) settings.delete(key);
+                else settings.set(key, value);
+              },
+            }),
+            onDidChangeConfiguration: (listener) => {
+              onConfigChange = listener;
+              return { dispose() {} };
+            },
+          },
+        };
+      },
+    };
+    sandbox.exports = sandbox.module.exports;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tode-theme-own-ipc-"));
+    fs.writeFileSync(
+      path.join(dir, "live.json"),
+      JSON.stringify({ colors: { "editor.background": "#111111" } }),
+    );
+    vm.runInNewContext(
+      bridgeSource({
+        tode: ["tode"],
+        ipcDir: dir,
+        themeName: THEME_NAME,
+        liveThemeFile: path.join(dir, "live.json"),
+        quitHint: "press it",
+        startupOpenFile: path.join(dir, "startup.json"),
+      }),
+      sandbox,
+    );
+    // activate stands up a real ipc listener and a file watcher; both are
+    // disposed at the end so the test runner can exit
+    const subscriptions = [];
+    sandbox.module.exports.activate({
+      subscriptions,
+      environmentVariableCollection: { replace() {} },
+    });
+
+    assert.ok(onConfigChange, "the bridge follows the colour theme setting");
+    assert.equal(
+      settings.get("workbench.colorCustomizations"),
+      undefined,
+      "a theme the user picked is not painted over",
+    );
+    assert.equal(settings.get("editor.tokenColorCustomizations"), undefined);
+
+    // back to tode's theme and its colours come back
+    settings.set("workbench.colorTheme", THEME_NAME);
+    onConfigChange({ affectsConfiguration: (key) => key === "workbench.colorTheme" });
+    assert.deepEqual(
+      // the object comes out of the vm's own realm, so compare the values
+      JSON.parse(JSON.stringify(settings.get("workbench.colorCustomizations"))),
+      { "editor.background": "#111111" },
+      "choosing tode's theme again brings the terminal's colours back",
+    );
+    for (const subscription of subscriptions) subscription.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+  } finally {
+    if (prev.data === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prev.data;
+    if (prev.state === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = prev.state;
+    for (const key of Object.keys(require.cache)) delete require.cache[key];
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a theme set from a file survives the next open, and --theme alone gives it back", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tode-theme-choice-"));
+  const prev = { data: process.env.XDG_DATA_HOME, state: process.env.XDG_STATE_HOME };
+  process.env.XDG_DATA_HOME = path.join(home, "share");
+  process.env.XDG_STATE_HOME = path.join(home, "state");
+  for (const key of Object.keys(require.cache)) delete require.cache[key];
+  const profile = require("../dist/profile.js");
+  const { generateTheme } = require("../dist/theme/generate.js");
+  const palette = {
+    background: [10, 10, 10],
+    foreground: [200, 200, 200],
+    ansi: Array.from({ length: 16 }, (_, at) => [at * 5, at * 5, at * 5]),
+  };
+  try {
+    // nothing chosen: the terminal's own colours
+    const derived = profile.installActiveTheme(palette);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(derived)),
+      JSON.parse(JSON.stringify(generateTheme(palette))),
+      "with no choice the theme comes from the terminal",
+    );
+
+    const file = path.join(home, "mine.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ name: "Mine", type: "dark", colors: { "editor.background": "#123456" } }),
+    );
+    assert.equal(profile.setThemeFile(file), null, "the file is accepted");
+
+    // the open path runs this on every single open, and used to overwrite it
+    const active = profile.installActiveTheme(palette);
+    assert.equal(active.colors["editor.background"], "#123456", "the chosen theme is what gets installed");
+    assert.equal(
+      profile.themeBackground(active, palette),
+      "#123456",
+      "and the injected css is painted with it, not the terminal's background",
+    );
+    const live = JSON.parse(fs.readFileSync(profile.LIVE_THEME_FILE, "utf8"));
+    assert.equal(live.colors["editor.background"], "#123456", "open windows are told about it too");
+
+    // a theme file that goes away falls back rather than failing
+    fs.rmSync(file, { force: true });
+    const fallback = profile.installActiveTheme(palette);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(fallback)),
+      JSON.parse(JSON.stringify(generateTheme(palette))),
+      "a chosen file that is gone falls back to the terminal rather than failing",
+    );
+
+    // --theme with no argument drops the choice
+    fs.writeFileSync(file, JSON.stringify({ colors: { "editor.background": "#abcdef" } }));
+    profile.setThemeFile(file);
+    assert.equal(profile.forgetThemeChoice(), true, "the choice was there to drop");
+    assert.equal(profile.forgetThemeChoice(), false, "and dropping it twice is not an error");
+    const back = profile.installActiveTheme(palette);
+    assert.notEqual(back.colors["editor.background"], "#abcdef", "the terminal's colours are back");
+  } finally {
+    if (prev.data === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prev.data;
+    if (prev.state === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = prev.state;
+    for (const key of Object.keys(require.cache)) delete require.cache[key];
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("TODE_QUIT_CHORD names the quit key, and the next install remembers it", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tode-quit-"));
+  const prev = {
+    data: process.env.XDG_DATA_HOME,
+    state: process.env.XDG_STATE_HOME,
+    chord: process.env.TODE_QUIT_CHORD,
+  };
+  process.env.XDG_DATA_HOME = path.join(home, "share");
+  process.env.XDG_STATE_HOME = path.join(home, "state");
+  const fresh = (id) => {
+    for (const key of Object.keys(require.cache)) delete require.cache[key];
+    return require(id);
+  };
+  try {
+    process.env.TODE_QUIT_CHORD = "Ctrl+Shift+Q";
+    assert.equal(fresh("../dist/shortcuts/store.js").QUIT_CHORD, "ctrl+shift+q", "the env names it");
+
+    // the install step is what writes it down; importing the module must not
+    const { installKeybindings, USER_DIR } = fresh("../dist/profile.js");
+    const { parseJsonc } = require("../dist/jsonc.js");
+    installKeybindings();
+    const bindings = parseJsonc(fs.readFileSync(path.join(USER_DIR, "keybindings.json"), "utf8"));
+    assert.ok(
+      bindings.some((b) => b.key === "ctrl+shift+q" && b.command === "tode.confirmQuit"),
+      "the chosen chord is what quits",
+    );
+
+    // a later shell without the variable keeps the choice
+    delete process.env.TODE_QUIT_CHORD;
+    assert.equal(fresh("../dist/shortcuts/store.js").QUIT_CHORD, "ctrl+shift+q", "and it sticks");
+  } finally {
+    if (prev.data === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prev.data;
+    if (prev.state === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = prev.state;
+    if (prev.chord === undefined) delete process.env.TODE_QUIT_CHORD;
+    else process.env.TODE_QUIT_CHORD = prev.chord;
+    for (const key of Object.keys(require.cache)) delete require.cache[key];
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A window listens on a unix socket on posix and on a named pipe on Windows;
+// both are what net.connect takes, so the tests only need the right shape.
+function ipcAddress(dir, name) {
+  const path = require("node:path");
+  if (process.platform !== "win32") return path.join(dir, `${name}.sock`);
+  const address = ["\\\\", ".", "\\", "pipe", "\\", "tode-test-", name, "-", String(process.pid), "-", String(Date.now())].join("");
+  return address;
+}

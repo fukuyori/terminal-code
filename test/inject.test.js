@@ -268,3 +268,42 @@ test("the empty editor stays empty: the watermark is always hidden", () => {
   assert.match(css, /\.editor-group-watermark\{display:none !important;\}/);
 });
 
+test("tode's settings are handed to the workbench in its own document", () => {
+  const { withConfigurationDefaults } = require("../dist/codeserver/inject.js");
+  const options = { remoteAuthority: "127.0.0.1:1234", productConfiguration: { x: 1 } };
+  const escaped = JSON.stringify(options).replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+  const html = `<head><meta id="vscode-workbench-web-configuration" data-settings="${escaped}"></head>`;
+
+  const out = withConfigurationDefaults(html, { "workbench.colorTheme": "Terminal Code" });
+  const back = JSON.parse(
+    /data-settings="([^"]*)"/
+      .exec(out)[1]
+      .replaceAll("&quot;", '"')
+      .replaceAll("&amp;", "&"),
+  );
+  assert.deepEqual(back.configurationDefaults, { "workbench.colorTheme": "Terminal Code" });
+  assert.equal(back.remoteAuthority, "127.0.0.1:1234", "everything else is carried through");
+  assert.deepEqual(back.productConfiguration, { x: 1 });
+
+  // what the server already put there wins, and nothing to say leaves it alone
+  const withOwn = withConfigurationDefaults(
+    `<meta id="vscode-workbench-web-configuration" data-settings="${JSON.stringify({
+      configurationDefaults: { "workbench.colorTheme": "Theirs" },
+    })
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")}">`,
+    { "workbench.colorTheme": "Terminal Code", "editor.fontSize": 13 },
+  );
+  const merged = JSON.parse(
+    /data-settings="([^"]*)"/.exec(withOwn)[1].replaceAll("&quot;", '"').replaceAll("&amp;", "&"),
+  );
+  assert.equal(merged.configurationDefaults["workbench.colorTheme"], "Theirs");
+  assert.equal(merged.configurationDefaults["editor.fontSize"], 13);
+
+  assert.equal(withConfigurationDefaults(html, {}), html, "nothing to say, nothing rewritten");
+  assert.equal(
+    withConfigurationDefaults("<head></head>", { a: 1 }),
+    "<head></head>",
+    "a document without the tag is left alone",
+  );
+});

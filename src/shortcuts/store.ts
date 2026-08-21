@@ -58,7 +58,40 @@ export function clearDecisions(): void {
   fs.rmSync(DECISIONS_FILE, { force: true });
 }
 
-export const QUIT_CHORD = process.platform === "darwin" ? "ctrl+c" : "ctrl+q";
+/** Where a chord chosen with TODE_QUIT_CHORD is kept, so it survives the shell
+ * that set it. */
+export const QUIT_CHORD_FILE = path.join(DATA_DIR, "quit-chord");
+
+function chosenChord(): string | null {
+  const wanted = process.env.TODE_QUIT_CHORD?.trim().toLowerCase();
+  return wanted ? wanted : null;
+}
+
+function rememberedChord(): string | null {
+  try {
+    return fs.readFileSync(QUIT_CHORD_FILE, "utf8").trim().toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** What quits the editor. ctrl+q everywhere but macOS, where it is ctrl+c —
+ * unless the terminal already owns that chord and will never pass it on. The
+ * wizard negotiates this where it has a backend; where it does not (Windows),
+ * TODE_QUIT_CHORD names the chord outright and the next open remembers it. */
+export const QUIT_CHORD =
+  chosenChord() ?? rememberedChord() ?? (process.platform === "darwin" ? "ctrl+c" : "ctrl+q");
+
+/** Persist a chord asked for through the environment. Called from the install
+ * step rather than at load, so importing this module writes nothing. */
+export function rememberQuitChord(): void {
+  const wanted = chosenChord();
+  if (!wanted || wanted === rememberedChord()) return;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(QUIT_CHORD_FILE, `${wanted}\n`);
+  } catch {}
+}
 
 export const QUIT_COMMAND = "tode.confirmQuit";
 

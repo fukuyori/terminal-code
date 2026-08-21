@@ -52,7 +52,57 @@ function buildQuery(): string {
 
 const DONE = /\x1b\[\?[0-9;]*c/;
 
+/** Windows has no /dev/tty to open a second handle on, so the console tode was
+ * started with is borrowed: stdin goes raw for as long as the answers take, and
+ * is handed back exactly as it was found. */
+function queryOwnConsole(idleMs: number, capMs: number): Promise<ParsedReplies | null> {
+  return new Promise((resolve) => {
+    const input = process.stdin as tty.ReadStream;
+    if (!input.isTTY || !process.stdout.isTTY) return resolve(null);
+    const wasRaw = input.isRaw;
+    // isPaused() is false on a stdin nothing has read yet — flowing is null,
+    // not false — so it cannot say whether this console was already being read.
+    // Nothing else in tode reads stdin before the palette, and the browser is
+    // spawned with this same console inherited: leaving the stream flowing here
+    // means tode goes on consuming the bytes meant for the pane, and every
+    // mouse report and key press disappears into this process instead.
+    const wasFlowing = input.readableFlowing === true;
+    let raw = "";
+    let settled = false;
+    const onData = (chunk: Buffer) => {
+      raw += chunk.toString("utf8");
+      if (DONE.test(raw)) return finish(parseReplies(raw));
+      clearTimeout(idle);
+      idle = setTimeout(settle, idleMs);
+    };
+    const finish = (value: ParsedReplies | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(idle);
+      clearTimeout(cap);
+      input.off("data", onData);
+      try {
+        input.setRawMode(wasRaw);
+      } catch {}
+      if (!wasFlowing) input.pause();
+      resolve(value);
+    };
+    const settle = () => finish(raw ? parseReplies(raw) : null);
+    let idle = setTimeout(settle, idleMs);
+    const cap = setTimeout(settle, capMs);
+    try {
+      input.setRawMode(true);
+      input.on("data", onData);
+      input.resume();
+      process.stdout.write(buildQuery());
+    } catch {
+      finish(null);
+    }
+  });
+}
+
 export function queryTerminal(idleMs = 400, capMs = 2000): Promise<ParsedReplies | null> {
+  if (process.platform === "win32") return queryOwnConsole(idleMs, capMs);
   return new Promise((resolve) => {
     if (!process.stdout.isTTY) return resolve(null);
     let fd: number;
@@ -126,4 +176,40 @@ export function withFallbacks(parsed: ParsedReplies | null): TerminalPalette {
     foreground: parsed?.foreground ?? [230, 233, 239],
     ansi: FALLBACK_ANSI.map((slot, index) => parsed?.ansi[index] ?? slot),
   };
+}
+
+/** Everything a drawing pane switches on, switched back off.
+ *
+ * terminal-browser writes this itself when it exits, but it can only do that if
+ * it gets to exit: a pane whose browser was killed outright is left on the
+ * alternate screen, with no cursor, with mouse reporting on, and with the last
+ * frame still drawn over it. `tode --reset-terminal` writes the same sequence
+ * from the outside, so the pane can be had back without closing it.
+ *
+ * The order matters: the modes go off while the alternate screen is still up,
+ * the leftover frame is cleared there, and only then is the screen left — so
+ * nothing is cleared out of the shell's own scrollback. */
+const RESTORE = [
+  "\x1b[<u", // pop the kitty keyboard flags terminal-browser pushed
+  "\x1b[>4;0m", // modifyOtherKeys off
+  "\x1b[?2031l", // colour scheme change reports off
+  "\x1b[?2048l", // in-band resize reports off
+  "\x1b[?2004l", // bracketed paste off
+  "\x1b[?1004l", // focus reporting off
+  "\x1b[?1016l", // pixel mouse coordinates off
+  "\x1b[?1006l", // SGR mouse encoding off
+  "\x1b[?1003l", // any-event mouse tracking off
+  "\x1b_Ga=d\x1b\\", // delete every kitty graphics image
+  "\x1b[2J\x1b[H", // clear whatever frame is still drawn, alternate screen and all
+  "\x1b[?25h", // cursor back
+  "\x1b[?1049l", // and back to the shell's own screen
+  "\x1b[0m", // with no colour left over
+].join("");
+
+/** Writes the restore sequence to this terminal. Does nothing when stdout is
+ * not one, so it is safe in a pipe. */
+export function restoreTerminal(): boolean {
+  if (!process.stdout.isTTY) return false;
+  process.stdout.write(RESTORE);
+  return true;
 }

@@ -42,13 +42,25 @@ function modified(file: string): number {
   }
 }
 
+/** Where vscode-compatible editors keep their per-user profile. Windows uses
+ * roaming appdata, which is also where the User directory each editor writes
+ * settings.json into lives. */
+function supportDir(): string {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support");
+  }
+  if (process.platform === "win32") {
+    return process.env.APPDATA && path.isAbsolute(process.env.APPDATA)
+      ? process.env.APPDATA
+      : path.join(os.homedir(), "AppData", "Roaming");
+  }
+  return process.env.XDG_CONFIG_HOME && path.isAbsolute(process.env.XDG_CONFIG_HOME)
+    ? process.env.XDG_CONFIG_HOME
+    : path.join(os.homedir(), ".config");
+}
+
 export function findEditors(): Editor[] {
-  const support =
-    process.platform === "darwin"
-      ? path.join(os.homedir(), "Library", "Application Support")
-      : process.env.XDG_CONFIG_HOME && path.isAbsolute(process.env.XDG_CONFIG_HOME)
-        ? process.env.XDG_CONFIG_HOME
-        : path.join(os.homedir(), ".config");
+  const support = supportDir();
   let names: string[];
   try {
     names = fs.readdirSync(support);

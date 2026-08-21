@@ -37,8 +37,22 @@ test("a full colours file round-trips through withFallbacks", () => {
 function loadBridgeSandbox(extensionSource, fakeHome, vscodeOverrides = {}) {
   const updates = [];
   const spawned = [];
+  // the settings the bridge reads back, kept alongside the record of writes so
+  // that asking for a value it just set gives the value it just set
+  const settings = new Map();
   const vscode = {
-    workspace: { getConfiguration: () => ({ update: (key, value) => updates.push({ key, value }) }) },
+    workspace: {
+      getConfiguration: () => ({
+        get: (key) => settings.get(key),
+        inspect: (key) => ({ globalValue: settings.get(key) }),
+        update: (key, value) => {
+          updates.push({ key, value });
+          if (value === undefined) settings.delete(key);
+          else settings.set(key, value);
+        },
+      }),
+      onDidChangeConfiguration: () => ({ dispose() {} }),
+    },
     ConfigurationTarget: { Global: 1 },
     commands: { registerCommand: () => ({ dispose() {} }), executeCommand: () => {} },
     window: { tabGroups: { all: [], onDidChangeTabs: () => ({ dispose() {} }) } },
@@ -86,8 +100,20 @@ test("the bridge applies the live theme on activation and again on every change,
       // values crossed the vm sandbox boundary, so they carry that context's
       // Object prototype; comparing serialized form sidesteps the realm mismatch
       const same = (a, b) => assert.equal(JSON.stringify(a), JSON.stringify(b));
-      assert.equal(updates.length, 2, "activation applies the theme already on disk");
-      same(updates[0].value, generateTheme(RED).colors);
+      const first = (key) => updates.find((u) => u.key === key);
+      // the web workbench keeps its settings in the browser, so putting it in
+      // tode's theme is something only the extension can do, and activation is
+      // when it does it
+      const { THEME_NAME } = require("../dist/theme/generate.js");
+      assert.equal(
+        first("workbench.colorTheme").value,
+        THEME_NAME,
+        "activation puts the workbench in tode's theme",
+      );
+      same(first("workbench.colorCustomizations").value, generateTheme(RED).colors);
+      same(first("editor.tokenColorCustomizations").value, {
+        textMateRules: generateTheme(RED).tokenColors,
+      });
 
       const tmp = `${LIVE_THEME_FILE}.tmp`;
       fs.writeFileSync(tmp, `${JSON.stringify(generateTheme(BLUE))}\n`);
@@ -265,8 +291,8 @@ test("the browser main script turns a colours message into a theme at every wind
       connection.end('{"ok":true}\n');
     });
   });
-  const sock = path.join(sockDir, "w1.sock");
-  await new Promise((r) => server.listen(sock, r));
+  const window = fakeWindow(sockDir, "w1");
+  await new Promise((r) => server.listen(window.address, r));
   try {
     // the pinned build requires the module for its side effects; subscribing
     // to tode's ipc channel is that side effect
@@ -349,3 +375,19 @@ test("a theme over the window socket is applied live and persisted for the next 
     for (const key of Object.keys(require.cache)) delete require.cache[key];
   }
 });
+
+// A window advertises itself with a unix socket on posix and with a file naming
+// a named pipe on Windows (src/ipc.ts). Tests that stand up a fake window go
+// through the same two shapes so they exercise the real discovery path.
+function fakeWindow(dir, name) {
+  const path = require("node:path");
+  const fs = require("node:fs");
+  if (process.platform !== "win32") {
+    const sock = path.join(dir, `${name}.sock`);
+    return { address: sock, advertised: sock };
+  }
+  const address = ["\\\\", ".", "\\", "pipe", "\\", "tode-test-", name, "-", String(process.pid), "-", String(Date.now())].join("");
+  const advertised = path.join(dir, `${name}.pipe`);
+  fs.writeFileSync(advertised, address);
+  return { address, advertised };
+}

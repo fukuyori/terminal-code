@@ -63,8 +63,11 @@ interface VscodeApi {
   };
   workspace: {
     getConfiguration(): {
+      get(key: string): unknown;
+      inspect(key: string): { globalValue?: unknown } | undefined;
       update(key: string, value: unknown, target: unknown): unknown;
     };
+    onDidChangeConfiguration(listener: (event: { affectsConfiguration(key: string): boolean }) => void): Disposable;
     workspaceFolders?: readonly { uri: Uri }[];
     openTextDocument(uri: Uri): Promise<{ uri: Uri }>;
     updateWorkspaceFolders(start: number, deleteCount: number, ...folders: Array<{ uri: Uri }>): boolean;
@@ -79,7 +82,6 @@ interface ExtensionContext {
 export function bridgeMain(ctx: BridgeCtx): void {
   const fs = require("fs") as typeof import("node:fs");
   const net = require("net") as typeof import("node:net");
-  const os = require("os") as typeof import("node:os");
   const path = require("path") as typeof import("node:path");
   const vscode = require("vscode") as VscodeApi;
 
@@ -114,8 +116,54 @@ export function bridgeMain(ctx: BridgeCtx): void {
     void vscode.env.openExternal(vscode.Uri.parse("terminal-browser://quit"));
   }
 
+  /** Whether tode's colours are the ones in charge.
+   *
+   * tode paints by writing colorCustomizations over whatever theme is active,
+   * which is how a window follows the terminal without a reload. That is only
+   * right while the workbench is wearing tode's own theme: the moment someone
+   * picks another one, those customizations would paint over their choice and
+   * it would look like the theme never changed. */
+  function chosenTheme(): unknown {
+    // inspect, not get: get resolves through the default layer and so never
+    // says whether anyone actually picked anything
+    const inspected = vscode.workspace.getConfiguration().inspect("workbench.colorTheme");
+    return inspected ? inspected.globalValue : undefined;
+  }
+
+  function todeOwnsTheme(): boolean {
+    const chosen = chosenTheme();
+    return chosen === undefined || chosen === ctx.themeName;
+  }
+
+  /** Put the workbench in tode's theme, unless the user has already said what
+   * they want.
+   *
+   * The web workbench keeps its user settings in the browser, not in the
+   * profile directory tode writes to, so this is the only place the setting can
+   * be made — and it is the same place the editor writes to when someone picks
+   * a theme themselves, which is what makes their choice stick afterwards. */
+  function claimTheme(): void {
+    if (chosenTheme() !== undefined) return;
+    vscode.workspace
+      .getConfiguration()
+      .update("workbench.colorTheme", ctx.themeName, vscode.ConfigurationTarget.Global);
+  }
+
+  /** Take tode's colours back off, so the theme the user picked is what shows. */
+  function releaseTheme(): void {
+    const cfg = vscode.workspace.getConfiguration();
+    const target = vscode.ConfigurationTarget.Global;
+    if (cfg.get("workbench.colorCustomizations") !== undefined) {
+      cfg.update("workbench.colorCustomizations", undefined, target);
+    }
+    if (cfg.get("editor.tokenColorCustomizations") !== undefined) {
+      cfg.update("editor.tokenColorCustomizations", undefined, target);
+    }
+  }
+
   function applyThemeDocument(theme: BridgeTheme | null | undefined): void {
     if (!theme || typeof theme !== "object") return;
+    if (!todeOwnsTheme()) return;
     const cfg = vscode.workspace.getConfiguration();
     const target = vscode.ConfigurationTarget.Global;
     if (theme.colors) {
@@ -127,6 +175,7 @@ export function bridgeMain(ctx: BridgeCtx): void {
   }
 
   function applyLiveTheme(): void {
+    if (!todeOwnsTheme()) return;
     let theme: BridgeTheme;
     try {
       theme = JSON.parse(fs.readFileSync(LIVE_THEME_FILE, "utf8"));
@@ -134,6 +183,24 @@ export function bridgeMain(ctx: BridgeCtx): void {
       return;
     }
     applyThemeDocument(theme);
+  }
+
+  /** Follow the workbench's colour theme as the user changes it: hand the
+   * colours back when they pick their own, take them up again if they come back
+   * to tode's. Only a change of side does anything, so the config writes this
+   * makes cannot feed themselves. */
+  function watchThemeOwnership(): () => void {
+    let owned = todeOwnsTheme();
+    const subscription = vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration("workbench.colorTheme")) return;
+      const now = todeOwnsTheme();
+      if (now === owned) return;
+      owned = now;
+      if (now) applyLiveTheme();
+      else releaseTheme();
+    });
+    if (!owned) releaseTheme();
+    return () => subscription.dispose();
   }
 
   function persistLiveTheme(theme: BridgeTheme): void {
@@ -164,24 +231,42 @@ export function bridgeMain(ctx: BridgeCtx): void {
     };
   }
 
-  function socketPath(): string {
-    const stateHome =
-      process.env.XDG_STATE_HOME && path.isAbsolute(process.env.XDG_STATE_HOME)
-        ? process.env.XDG_STATE_HOME
-        : path.join(os.homedir(), ".local", "state");
-    const dir = path.join(stateHome, "tode", "ipc");
-    fs.mkdirSync(dir, { recursive: true });
-    return path.join(dir, `w${process.pid}-${Date.now()}.sock`);
+  /** Where this window listens, and the file that tells the rest of tode about
+   * it. A named pipe has no directory entry of its own, so on Windows the entry
+   * is a plain file naming the pipe; on posix the entry is the socket. */
+  function ipcEndpoint(): { address: string; advertised: string } {
+    const dir = ctx.ipcDir;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {}
+    const name = `w${process.pid}-${Date.now()}`;
+    if (process.platform === "win32") {
+      const advertised = path.join(dir, `${name}.pipe`);
+      const address = ["\\\\", ".", "\\", "pipe", "\\", "tode-", name].join("");
+      fs.writeFileSync(advertised, address);
+      return { address, advertised };
+    }
+    const address = path.join(dir, `${name}.sock`);
+    return { address, advertised: address };
+  }
+
+  /** The path half of a vscode uri is always posix, with the drive letter
+   * behind a leading slash: C:\src is /C:/src. Uri.file does this itself; the
+   * two paths below build a uri by hand and have to do it too. */
+  function uriPath(target: string): string {
+    if (process.platform !== "win32") return target;
+    const posix = target.split("\\").join("/");
+    return posix.charAt(0) === "/" ? posix : `/${posix}`;
   }
 
   function workspaceUri(target: string): Uri {
     const folders = vscode.workspace.workspaceFolders;
-    if (folders && folders.length > 0) return folders[0].uri.with({ path: target });
+    if (folders && folders.length > 0) return folders[0].uri.with({ path: uriPath(target) });
     if (vscode.env.remoteAuthority) {
       return vscode.Uri.from({
         scheme: "vscode-remote",
         authority: vscode.env.remoteAuthority,
-        path: target,
+        path: uriPath(target),
       });
     }
     return vscode.Uri.file(target);
@@ -197,7 +282,14 @@ export function bridgeMain(ctx: BridgeCtx): void {
   }
 
   async function open(request: BridgeRequest, acknowledge: () => void): Promise<void> {
+    if (request.quit) {
+      // answered first: the window is about to go, and the caller is waiting
+      acknowledge();
+      quitTode();
+      return;
+    }
     if (request.theme) {
+      if (!todeOwnsTheme()) return;
       applyThemeDocument(request.theme);
       persistLiveTheme(request.theme);
       return;
@@ -309,10 +401,14 @@ export function bridgeMain(ctx: BridgeCtx): void {
     // huh?
     applyStartupOpen();
 
+    claimTheme();
     const stopWatchingSettings = watchLiveTheme();
     context.subscriptions.push({ dispose: stopWatchingSettings });
+    const stopWatchingOwnership = watchThemeOwnership();
+    context.subscriptions.push({ dispose: stopWatchingOwnership });
 
-    const sock = socketPath();
+    const endpoint = ipcEndpoint();
+    const sock = endpoint.address;
     const server = net.createServer((connection) => {
       let buffer = "";
       connection.on("data", (chunk) => {
@@ -352,7 +448,7 @@ export function bridgeMain(ctx: BridgeCtx): void {
           server.close();
         } catch {}
         try {
-          fs.rmSync(sock, { force: true });
+          fs.rmSync(endpoint.advertised, { force: true });
         } catch {}
       },
     });
