@@ -16,7 +16,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0-win.1",
+    [string]$Version = "0.1.0-win.2",
     [string]$Channel = "windows",
     [switch]$VendorBrowser,
     [switch]$SkipPath
@@ -67,6 +67,9 @@ if (Test-Path -LiteralPath (Join-Path $root "config")) {
 }
 Set-Content -LiteralPath (Join-Path $stage "VERSION") -Value $Version -Encoding ascii
 Set-Content -LiteralPath (Join-Path $stage "CHANNEL") -Value $Channel -Encoding ascii
+# dist\ is CommonJS; without a package boundary here node walks up, and a
+# parent package.json with "type": "module" turns the install into broken ESM
+Set-Content -LiteralPath (Join-Path $stage "package.json") -Value '{"type":"commonjs"}' -Encoding ascii
 
 $browserRoot = Join-Path $env:LOCALAPPDATA "Programs\terminal-browser"
 if (-not (Test-Path -LiteralPath (Join-Path $browserRoot "cli\dist\main.js"))) {

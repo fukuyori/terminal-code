@@ -36,6 +36,9 @@ cp -R "$ROOT/assets" "$STAGE/assets"
 [ -d "$ROOT/config" ] && cp -R "$ROOT/config" "$STAGE/config"
 echo "$VERSION" > "$STAGE/VERSION"
 echo "$CHANNEL" > "$STAGE/CHANNEL"
+# dist/ is CommonJS; without a package boundary here node walks up, and a
+# parent package.json with "type": "module" turns the install into broken ESM
+printf '%s\n' '{"type":"commonjs"}' > "$STAGE/package.json"
 
 # The shim the installer copies to $XDG_BIN_HOME. It runs the CLI with the
 # vendored electron in node mode, so an install needs no node of its own. On

@@ -26,6 +26,9 @@ cp -R "$ROOT/assets" "$STAGE/assets"
 [ -d "$ROOT/config" ] && cp -R "$ROOT/config" "$STAGE/config"
 echo "$VERSION" > "$STAGE/VERSION"
 echo "dev" > "$STAGE/CHANNEL"
+# dist/ is CommonJS; without a package boundary here node walks up, and a
+# parent package.json with "type": "module" turns the install into broken ESM
+printf '%s\n' '{"type":"commonjs"}' > "$STAGE/package.json"
 
 echo "==> vendoring terminal-browser (cached pin)"
 TB_ROOT="$(cd "$ROOT" && node -e '
