@@ -14,8 +14,9 @@ This fork adds a native Windows x64 build — no WSL. It has been tested in Powe
 WezTerm, next to the Windows build of
 [terminal-browser](https://github.com/fukuyori/terminal-browser), which is what draws the pane.
 
-Press `Ctrl+Q` to quit. If the terminal owns that chord — WezTerm's leader often does — name
-another one with `TODE_QUIT_CHORD` and the next open remembers it.
+Press `Ctrl+Q` to quit. If the terminal owns that chord — WezTerm's leader often does — run
+`tode --shortcut-setup` to negotiate it, or name another one with `TODE_QUIT_CHORD` and the
+next open remembers it.
 
 Windows-specific changes in this fork include:
 
@@ -29,7 +30,9 @@ Windows-specific changes in this fork include:
   browser never reads them off disk
 - `tode --quit` to close a window without a chord, and `tode --reset-terminal` to put a pane
   back after a browser was killed outright
-- The shortcut wizard has no Windows backend yet, and says so rather than failing
+- The shortcut wizard drives WezTerm on Windows, through a config wrapper the
+  `WEZTERM_CONFIG_FILE` user environment variable points at — the user's Lua is
+  never edited. Other terminals still get a clear "not supported" and step aside
 
 See [Windows](#windows) below for the details and for what is not there yet.
 
@@ -167,32 +170,37 @@ reports `--vscode-editor-background` as the terminal's own background. Picking
 a theme in the editor makes the bridge hand those colours back, so the theme
 you picked is what shows.
 
+**Shortcuts.** `tode --shortcut-setup` drives WezTerm on Windows. WezTerm's
+config is a Lua program with no include directive, so the wizard never edits
+it: it writes a wrapper (`tode-wezterm.lua`, next to your `wezterm.lua`) that
+loads the real config and appends tode's overrides after it, where later
+entries win, and points the `WEZTERM_CONFIG_FILE` user environment variable at
+that wrapper. Restart WezTerm after applying — it reads that variable at
+startup. The one chord that usually matters is `Ctrl+Q`, which quits tode and
+which WezTerm's `config.leader` often owns; the wizard can free the leader or
+carry it to another chord, keeping its timeout. `tode --shortcut-setup --undo`
+removes the wrapper and puts the variable back the way it was. Terminals other
+than WezTerm have no Windows backend yet — there the wizard says so and steps
+aside, and `TODE_QUIT_CHORD` still names the quit chord by hand:
+
+```powershell
+$env:TODE_QUIT_CHORD = "ctrl+shift+q"
+tode
+```
+
+If a pane is ever killed outright rather than quitting — the browser force
+stopped, the process tree torn down — the terminal is left the way that pane
+was using it: on the alternate screen, no cursor, mouse reporting on, the last
+frame still drawn. `tode --reset-terminal` writes the sequence the browser
+would have written on its way out, and hands the pane back without closing it.
+
+`tode --quit` closes the open windows without a chord at all, from any shell.
+It is also the way to tell the two failures apart: if it reports no window
+listening, the bridge extension is not running and no chord would have reached
+it either.
+
 Not there yet:
 
-- `tode --shortcut-setup` has no Windows backend. Both of the ones that exist
-  drive ghostty and kitty through their own config files and binaries. On
-  Windows the wizard says so and steps aside; nothing else about tode depends on
-  it, and the editor keybindings are installed either way.
-
-  The one chord that matters is the one that quits, `Ctrl+Q`, and a terminal may
-  already own it — WezTerm's `config.leader` often does. Without a wizard to
-  negotiate that, name the chord yourself and the next open remembers it:
-
-  ```powershell
-  $env:TODE_QUIT_CHORD = "ctrl+shift+q"
-  tode
-  ```
-
-  If a pane is ever killed outright rather than quitting — the browser force
-  stopped, the process tree torn down — the terminal is left the way that pane
-  was using it: on the alternate screen, no cursor, mouse reporting on, the last
-  frame still drawn. `tode --reset-terminal` writes the sequence the browser
-  would have written on its way out, and hands the pane back without closing it.
-
-  `tode --quit` closes the open windows without a chord at all, from any shell.
-  It is also the way to tell the two failures apart: if it reports no window
-  listening, the bridge extension is not running and no chord would have
-  reached it either.
 - `tode --upgrade` follows this fork's [GitHub
   releases](https://github.com/fukuyori/terminal-code/releases): the `windows`
   channel reads `latest.json` off the newest release there, and

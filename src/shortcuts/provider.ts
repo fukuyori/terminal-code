@@ -1,5 +1,6 @@
 import { ghosttyProvider } from "./backends/ghostty";
 import { kittyProvider } from "./backends/kitty";
+import { weztermProvider } from "./backends/wezterm";
 /**
  * this API is pretty awful and subject to very large change
  */
@@ -50,12 +51,14 @@ export interface ShortcutProvider {
   reloadHint(): string;
 }
 
-/** Both backends read a unix config file and shell out to the terminal's own
- * binary, so neither has anything to say on Windows yet. An empty list is what
- * the wizard already treats as "this terminal is not supported", so it prints
- * that and steps aside rather than failing. */
+/** The ghostty and kitty backends read a unix config file and shell out to the
+ * terminal's own binary, so they have nothing to say on Windows; there the
+ * wezterm backend persists its override through the registry instead, which is
+ * why it is the one Windows offers. A terminal with no provider here is what
+ * the wizard already treats as "not supported": it prints that and steps aside
+ * rather than failing. */
 const PROVIDERS: ShortcutProvider[] =
-  process.platform === "win32" ? [] : [ghosttyProvider, kittyProvider];
+  process.platform === "win32" ? [weztermProvider] : [ghosttyProvider, kittyProvider];
 
 export function providerFor(env: NodeJS.ProcessEnv = process.env): ShortcutProvider | null {
   return PROVIDERS.find((provider) => provider.detect(env)) ?? null;
