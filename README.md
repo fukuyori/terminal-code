@@ -62,9 +62,10 @@ terminal and run `tode`.
 
 A build is named after the upstream version this fork builds on plus its own
 revision, the way terminal-browser's Windows builds are: `0.1.0-win.2` would be
-the second Windows build on upstream `0.1.0`. The current one is the `-Version`
-default at the top of `scripts\dist-windows.ps1` — edit that line to cut a new
-one, or pass `-Version` for a one-off. It ends up in `VERSION`, which is what
+the second Windows build on upstream `0.1.0`. The current one is the
+`$TodeWindowsVersion` default at the top of `scripts\stage-windows.ps1`, shared
+by the dev install and the release scripts — edit that line to cut a new one,
+or pass `-Version` for a one-off. It ends up in `VERSION`, which is what
 `tode --version` reports.
 
 ### Usage
@@ -197,11 +198,21 @@ Not there yet:
   channel reads `latest.json` off the newest release there, and
   `--upgrade --version <v>` reads the `manifest.json` inside the `v<v>` tag.
   Until a release is published the check reports a 404 — re-run
-  `npm run dist:windows` from the checkout in the meantime. Cutting a release
-  from a checkout is `npm run release:windows`, which stages the same layout a
-  dev install gets, zips it with the manifests beside it, and prints the
-  `gh release create` line that publishes them (or pass `-Publish` to
-  `scripts\dist-windows.ps1 -Package` to run it directly).
+  `npm run dist:windows` from the checkout in the meantime.
+
+  Cutting a release from a checkout is three steps, each its own script:
+
+  ```powershell
+  npm run release:windows                 # 1. stage + zip + manifests
+  scripts\installer-windows.ps1 -Sign     # 2. Inno Setup installer, signed
+  scripts\publish-windows.ps1             # 3. gh release create v<version>
+  ```
+
+  Step 2 needs Inno Setup 6 and, for `-Sign`, `CODESIGN_CERT` set to the
+  signing certificate's subject name; without `-Sign` it builds unsigned and
+  step 3 refuses it unless told `-AllowUnsigned`. The version all three agree
+  on is the default at the top of `scripts\stage-windows.ps1` — the same line
+  a dev install reports.
 
 If you would rather not run any of this, the Linux build inside
 [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) is still an option.
