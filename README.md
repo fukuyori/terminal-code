@@ -75,11 +75,7 @@ Commands, each as the first argument:
   --theme [file]        Set editor theme from a vscode theme json. It sticks:
                         every open after it keeps that theme instead of
                         regenerating one from the terminal. `--theme` with no
-                        file goes back to the terminal's own colours.
-                        Picking a theme in the editor works too — tode seeds its
-                        own the first time and then leaves the setting alone,
-                        and stops painting the terminal's colours over whatever
-                        you chose
+                        file goes back to the terminal's own colours
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
   --shutdown            Stop all terminal-code activities
@@ -124,10 +120,26 @@ Windows support is experimental, and this is what it is made of:
 - **Where things live.** Windows has no XDG split, so the three homes sit under
   `%LOCALAPPDATA%\tode` as `data`, `state` and `cache`. Setting `XDG_DATA_HOME`
   and friends still wins, on Windows as everywhere else.
+- **Settings.** The workbench in a browser keeps its user settings in the
+  browser, not in the profile directory on disk, so the `settings.json` tode
+  writes is read by the cli and by nothing else. What tode wants is handed to
+  the page as `configurationDefaults` in the document the injector serves, which
+  lands in the default layer — so tode's answers apply and anything changed in
+  the editor still wins over them.
 - **Talking to open windows.** A window listens on a named pipe rather than a
   unix socket, and advertises it with a small `.pipe` file in
   `%LOCALAPPDATA%\tode\state\ipc`, so `tode <file>` from inside a window still
   reaches the window it is in.
+
+The colour theme works differently here than the name suggests. tode does not
+get the workbench to *select* its theme — no setting reaches the theme service
+on this server, `configurationDefaults` included, and a built-in theme named
+there does not take either. What does reach it is
+`workbench.colorCustomizations`, which the bridge writes over whatever theme is
+active, and that is where the terminal's colours come from: the workbench
+reports `--vscode-editor-background` as the terminal's own background. Picking
+a theme in the editor makes the bridge hand those colours back, so the theme
+you picked is what shows.
 
 Not there yet:
 
