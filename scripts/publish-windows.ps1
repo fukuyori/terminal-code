@@ -8,12 +8,22 @@
     That tag is where the windows channel looks — releases/latest/download/
     latest.json for `tode --upgrade`, the tag's own manifest.json for a
     pinned --version. The posix counterpart is scripts/publish-r2.sh.
+
+    Before publishing, the artifacts go through the local Windows Defender
+    engine — the same one that would flag them on a user's machine — and a
+    detection stops the release. With VT_API_KEY set, the installer is also
+    uploaded to VirusTotal (which shares samples with AV vendors, so this is
+    itself a form of publication — the key being set is the opt-in) and a
+    malicious verdict stops the release too. -ScanOnly runs those checks and
+    stops; -SkipScan is the emergency hatch past them.
 #>
 [CmdletBinding()]
 param(
     [string]$Version,
     [string]$Repo = "fukuyori/terminal-code",
-    [switch]$AllowUnsigned
+    [switch]$AllowUnsigned,
+    [switch]$ScanOnly,
+    [switch]$SkipScan
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,12 +51,84 @@ $assets = @($zip, $latest, $pinned)
 $installer = Get-ChildItem -LiteralPath $out -Filter "tode-*-windows-x64.exe" -File |
     Select-Object -First 1
 if ($installer) {
-    if ((Get-AuthenticodeSignature $installer.FullName).Status -ne "Valid" -and -not $AllowUnsigned) {
-        throw "$($installer.Name) is unsigned; run scripts\installer-windows.ps1 -Sign, or pass -AllowUnsigned"
-    }
     $assets += $installer.FullName
 } else {
     Write-Warning "no installer in $out; publishing the zip alone (scripts\installer-windows.ps1 builds one)"
+}
+
+# The updatable engine under ProgramData is the one actually running; the
+# ProgramFiles copy is the version Windows shipped with and can be years stale.
+function Resolve-MpCmdRun {
+    $platform = Join-Path $env:ProgramData "Microsoft\Windows Defender\Platform"
+    if (Test-Path -LiteralPath $platform) {
+        $newest = Get-ChildItem -LiteralPath $platform -Directory | Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName "MpCmdRun.exe" } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Select-Object -First 1
+        if ($newest) { return $newest }
+    }
+    $shim = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+    if (Test-Path -LiteralPath $shim -PathType Leaf) { return $shim }
+    return $null
+}
+
+if (-not $SkipScan) {
+    $mpcmd = Resolve-MpCmdRun
+    if ($mpcmd) {
+        $scanTargets = @($zip) + $(if ($installer) { @($installer.FullName) } else { @() })
+        foreach ($target in $scanTargets) {
+            Write-Output "==> defender scan $(Split-Path -Leaf $target)"
+            # -DisableRemediation: a detection should stop the release, not
+            # quarantine the file we would want to inspect
+            & $mpcmd -Scan -ScanType 3 -File $target -DisableRemediation
+            if ($LASTEXITCODE -eq 2) {
+                throw "Windows Defender flagged $target; do not publish — if it is a false positive, report it at https://www.microsoft.com/en-us/wdsi/filesubmission"
+            }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "MpCmdRun exited $LASTEXITCODE for $target (not a detection, but the scan did not finish)"
+            }
+        }
+    } else {
+        Write-Warning "Windows Defender's MpCmdRun.exe was not found; skipping the malware scan"
+    }
+
+    if ($env:VT_API_KEY -and $installer) {
+        Write-Output "==> virustotal $($installer.Name)"
+        # curl.exe rather than Invoke-RestMethod: Windows PowerShell 5.1 has no
+        # -Form, and the System32 curl is always there
+        $upload = & curl.exe -s -H "x-apikey: $env:VT_API_KEY" -F "file=@$($installer.FullName)" `
+            "https://www.virustotal.com/api/v3/files" | ConvertFrom-Json
+        if (-not $upload.data.id) { throw "virustotal upload failed" }
+        $report = "https://www.virustotal.com/gui/file/$((Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+        $analysis = $null
+        foreach ($attempt in 1..40) {
+            Start-Sleep -Seconds 15
+            $analysis = & curl.exe -s -H "x-apikey: $env:VT_API_KEY" `
+                "https://www.virustotal.com/api/v3/analyses/$($upload.data.id)" | ConvertFrom-Json
+            if ($analysis.data.attributes.status -eq "completed") { break }
+        }
+        if ($analysis.data.attributes.status -eq "completed") {
+            $stats = $analysis.data.attributes.stats
+            if ($stats.malicious -gt 0) {
+                throw "virustotal: $($stats.malicious) engine(s) call it malicious; do not publish — $report"
+            }
+            if ($stats.suspicious -gt 0) {
+                Write-Warning "virustotal: $($stats.suspicious) engine(s) call it suspicious — $report"
+            }
+            Write-Output "virustotal: clean ($report)"
+        } else {
+            Write-Warning "virustotal did not finish within 10 minutes; check $report before announcing"
+        }
+    }
+}
+
+if ($ScanOnly) {
+    Write-Output "scan finished; nothing published"
+    return
+}
+
+if ($installer -and (Get-AuthenticodeSignature $installer.FullName).Status -ne "Valid" -and -not $AllowUnsigned) {
+    throw "$($installer.Name) is unsigned; run scripts\installer-windows.ps1 -Sign, or pass -AllowUnsigned"
 }
 
 Write-Output "==> publishing v$Version to $Repo"

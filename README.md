@@ -210,9 +210,12 @@ Not there yet:
 
   Step 2 needs Inno Setup 6 and, for `-Sign`, `CODESIGN_CERT` set to the
   signing certificate's subject name; without `-Sign` it builds unsigned and
-  step 3 refuses it unless told `-AllowUnsigned`. The version all three agree
-  on is the default at the top of `scripts\stage-windows.ps1` — the same line
-  a dev install reports.
+  step 3 refuses it unless told `-AllowUnsigned`. Step 3 also runs the
+  artifacts through the local Windows Defender engine first — and through
+  VirusTotal when `VT_API_KEY` is set, which uploads the installer there —
+  and a detection stops the release; `-ScanOnly` runs just those checks. The
+  version all three agree on is the default at the top of
+  `scripts\stage-windows.ps1` — the same line a dev install reports.
 
 If you would rather not run any of this, the Linux build inside
 [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) is still an option.
