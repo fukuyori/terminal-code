@@ -143,20 +143,6 @@ export function bridgeMain(ctx: BridgeCtx): void {
     return chosen === undefined || chosen === ctx.themeName;
   }
 
-  /** Put the workbench in tode's theme, unless the user has already said what
-   * they want.
-   *
-   * The web workbench keeps its user settings in the browser, not in the
-   * profile directory tode writes to, so this is the only place the setting can
-   * be made — and it is the same place the editor writes to when someone picks
-   * a theme themselves, which is what makes their choice stick afterwards. */
-  function claimTheme(): void {
-    if (chosenTheme() !== undefined) return;
-    vscode.workspace
-      .getConfiguration()
-      .update("workbench.colorTheme", ctx.themeName, vscode.ConfigurationTarget.Global);
-  }
-
   /** Take tode's colours back off, so the theme the user picked is what shows. */
   function releaseTheme(): void {
     const cfg = vscode.workspace.getConfiguration();
@@ -200,35 +186,93 @@ export function bridgeMain(ctx: BridgeCtx): void {
     return sawAny ? null : name;
   }
 
+  /** The theme this workbench is meant to wear, kept in a file on tode's side.
+   *
+   * The browser workbench does not manage to keep this itself: its theme
+   * service boots on an unloaded placeholder (settingsId "__vs" and friends)
+   * and writes that placeholder into the settings, over whatever was chosen —
+   * its own persisted theme state never survives these windows either. So the
+   * record lives with tode, the bridge restores it whenever the placeholder
+   * lands, and a theme the user picks in the editor becomes the new record. */
+  function chosenColorTheme(): string | null {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(COLOR_THEME_FILE, "utf8")) as { name?: string };
+      return parsed?.name || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function recordColorTheme(name: string): void {
+    try {
+      fs.mkdirSync(path.dirname(COLOR_THEME_FILE), { recursive: true });
+      fs.writeFileSync(COLOR_THEME_FILE, `${JSON.stringify({ name })}${NL}`);
+    } catch {}
+  }
+
   /** Select a color theme by name, the way the theme picker does: written to
-   * the global layer in the browser, where it persists across windows and
-   * sessions. The ownership watcher sees the change and hands tode's
-   * colorCustomizations back, so the picked theme is what shows. */
-  function applyColorTheme(name: string): void {
+   * the global layer in the browser. The ownership watcher sees the change and
+   * hands tode's colorCustomizations back, so the picked theme is what shows. */
+  function applyColorTheme(name: string): boolean {
     const label = resolveThemeLabel(name);
     if (label === null) {
       void vscode.window.showErrorMessage(
         `terminal-code: no color theme named "${name}" is installed`,
         { modal: false },
       );
-      return;
+      return false;
     }
     void vscode.workspace
       .getConfiguration()
       .update("workbench.colorTheme", label, vscode.ConfigurationTarget.Global);
+    recordColorTheme(label);
+    return true;
   }
 
-  function applyStartupColorTheme(): void {
-    let parsed: { name?: string } | null;
-    try {
-      parsed = JSON.parse(fs.readFileSync(COLOR_THEME_FILE, "utf8"));
-    } catch {
-      return;
+  /** Keep the chosen theme in charge of the setting.
+   *
+   * At activation the record is the deliberate channel and wins; with no
+   * record, a real value already in the setting becomes the record, and an
+   * empty setting gets tode's own theme, the first-run claim. From then on the
+   * placeholder clobber is corrected as it lands — it arrives moments after
+   * activation — and a real theme someone picks becomes the new record. The
+   * reassert cap keeps a theme that never resolves from turning into a loop. */
+  function guardColorTheme(): Disposable {
+    let reasserts = 0;
+    // resolved so a hand-typed record lands on the label's real spelling; an
+    // unresolvable one is written as it is rather than warned about every boot
+    const select = (name: string) =>
+      void vscode.workspace
+        .getConfiguration()
+        .update(
+          "workbench.colorTheme",
+          resolveThemeLabel(name) ?? name,
+          vscode.ConfigurationTarget.Global,
+        );
+    const chosen = chosenColorTheme();
+    const current = chosenTheme();
+    if (chosen) {
+      if (current !== chosen) select(chosen);
+    } else if (typeof current === "string" && !current.startsWith("__")) {
+      recordColorTheme(current);
+    } else if (current === undefined) {
+      recordColorTheme(ctx.themeName);
+      select(ctx.themeName);
     }
-    try {
-      fs.rmSync(COLOR_THEME_FILE, { force: true });
-    } catch {}
-    if (parsed?.name) applyColorTheme(parsed.name);
+    return vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration("workbench.colorTheme")) return;
+      const value = chosenTheme();
+      if (typeof value !== "string" || !value) return;
+      if (value.startsWith("__")) {
+        const wanted = chosenColorTheme();
+        if (wanted && reasserts < 5) {
+          reasserts += 1;
+          select(wanted);
+        }
+        return;
+      }
+      recordColorTheme(value);
+    });
   }
 
   function applyLiveTheme(): void {
@@ -348,11 +392,6 @@ export function bridgeMain(ctx: BridgeCtx): void {
     if (request.colorTheme) {
       acknowledge();
       applyColorTheme(request.colorTheme);
-      // whoever asked also staged the choice for windows not yet open; this
-      // window has applied it, and the browser remembers it for the rest
-      try {
-        fs.rmSync(COLOR_THEME_FILE, { force: true });
-      } catch {}
       return;
     }
     if (request.theme) {
@@ -468,8 +507,7 @@ export function bridgeMain(ctx: BridgeCtx): void {
     // huh?
     applyStartupOpen();
 
-    claimTheme();
-    applyStartupColorTheme();
+    context.subscriptions.push(guardColorTheme());
     const stopWatchingSettings = watchLiveTheme();
     context.subscriptions.push({ dispose: stopWatchingSettings });
     const stopWatchingOwnership = watchThemeOwnership();

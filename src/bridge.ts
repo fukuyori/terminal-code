@@ -18,7 +18,7 @@ import {
 } from "./shortcuts/store";
 
 const BRIDGE_ID = "tode.tode-bridge";
-const BRIDGE_VERSION = "1.6.0";
+const BRIDGE_VERSION = "1.6.1";
 
 export const STARTUP_OPEN_FILE = path.join(DATA_DIR, "startup-open.json");
 
@@ -27,10 +27,12 @@ export function requestStartupOpen(request: Partial<OpenRequest>): void {
   fs.writeFileSync(STARTUP_OPEN_FILE, `${JSON.stringify({ ...request, at: Date.now() })}\n`);
 }
 
-export const COLOR_THEME_FILE = path.join(DATA_DIR, "startup-color-theme.json");
+export const COLOR_THEME_FILE = path.join(DATA_DIR, "color-theme.json");
 
-/** A color theme chosen while no window is open: the next window's bridge
- * applies it and removes the file. No expiry — it is an explicit choice. */
+/** The record of which color theme the workbench should wear. The browser
+ * workbench loses this on its own — its theme service boots on a placeholder
+ * and writes that over the setting — so the bridge keeps enforcing this record
+ * and updates it when a theme is picked in the editor. */
 export function requestColorTheme(name: string): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(COLOR_THEME_FILE, `${JSON.stringify({ name })}\n`);

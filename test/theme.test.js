@@ -804,6 +804,7 @@ test("a color theme chosen by name reaches the workbench, at startup and over th
 
   const settings = new Map();
   const warnings = [];
+  const configListeners = [];
   const sandbox = {
     process,
     console,
@@ -837,7 +838,10 @@ test("a color theme chosen by name reaches the workbench, at startup and over th
               else settings.set(key, value);
             },
           }),
-          onDidChangeConfiguration: () => ({ dispose() {} }),
+          onDidChangeConfiguration: (listener) => {
+            configListeners.push(listener);
+            return { dispose() {} };
+          },
         },
       };
     },
@@ -865,18 +869,33 @@ test("a color theme chosen by name reaches the workbench, at startup and over th
     environmentVariableCollection: { replace() {} },
   });
   try {
-    assert.equal(settings.get("workbench.colorTheme"), "Monokai", "the staged choice lands, case fixed");
-    assert.equal(fs.existsSync(colorThemeFile), false, "the staged choice is consumed");
+    assert.equal(settings.get("workbench.colorTheme"), "Monokai", "the record is enforced at startup, case fixed");
+    assert.equal(fs.existsSync(colorThemeFile), true, "the record survives — it is what every open enforces");
 
     const [endpoint] = listEndpoints(dir);
     assert.ok(endpoint, "the bridge advertises its endpoint");
     await sendToExtension(endpoint.address, { files: [], folders: [], add: false, colorTheme: "custom-id" });
     assert.equal(settings.get("workbench.colorTheme"), "custom-id", "an id works as well as a label");
+    assert.equal(JSON.parse(fs.readFileSync(colorThemeFile, "utf8")).name, "custom-id", "the record follows");
 
     await sendToExtension(endpoint.address, { files: [], folders: [], add: false, colorTheme: "No Such Theme" });
     assert.equal(settings.get("workbench.colorTheme"), "custom-id", "an unknown name changes nothing");
     assert.equal(warnings.length, 1, "and says so in the workbench");
     assert.match(warnings[0], /No Such Theme/);
+
+    // the theme service boots on an unloaded placeholder and writes it over
+    // the setting; the guard writes the record back
+    settings.set("workbench.colorTheme", "__vs");
+    for (const fire of configListeners) fire({ affectsConfiguration: (key) => key === "workbench.colorTheme" });
+    assert.equal(settings.get("workbench.colorTheme"), "custom-id", "the placeholder clobber is undone");
+
+    // a theme picked in the editor becomes the record instead
+    settings.set("workbench.colorTheme", "Monokai");
+    for (const fire of configListeners) fire({ affectsConfiguration: (key) => key === "workbench.colorTheme" });
+    assert.equal(JSON.parse(fs.readFileSync(colorThemeFile, "utf8")).name, "Monokai", "the picker's choice is kept");
+    settings.set("workbench.colorTheme", "__vs-dark");
+    for (const fire of configListeners) fire({ affectsConfiguration: (key) => key === "workbench.colorTheme" });
+    assert.equal(settings.get("workbench.colorTheme"), "Monokai", "and it is what the guard restores");
   } finally {
     for (const subscription of subscriptions) subscription.dispose();
     fs.rmSync(dir, { recursive: true, force: true });
