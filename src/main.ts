@@ -12,7 +12,7 @@ import {
   stopServer,
 } from "./codeserver/server";
 import { SERVER_LABEL, ensureServerDist, narrateFetch } from "./codeserver/vendored";
-import { installBridge, requestStartupOpen } from "./bridge";
+import { installBridge, requestColorTheme, requestStartupOpen } from "./bridge";
 import { BOOT_AFTER_APPLY, autoApplyShared, shortcutsCommand } from "./shortcuts/wizard";
 import { importCommand } from "./import/command";
 import { runOnboarding } from "./onboarding";
@@ -43,7 +43,7 @@ import { uninstallCommand } from "./uninstall";
 import { upgrade } from "./upgrade";
 import { restoreTerminal } from "./terminal/osc";
 import { hex } from "./theme/color";
-import { generateTheme, semanticColors } from "./theme/generate";
+import { THEME_NAME, generateTheme, semanticColors } from "./theme/generate";
 
 function todeCommand(): string[] {
   const shim = shimFile();
@@ -127,8 +127,9 @@ Commands, each as the first argument:
   --timing              Profile terminal-code launch
   --import [editor]     Bring settings, keybindings, snippets and extensions
                         over from vscode compatible editors
-  --theme [file]        Set editor theme from a file, or go back to the
-                        terminal's colours when given no file
+  --theme [file|name]   Set editor theme from a vscode theme json, or pick an
+                        installed color theme by name ("Monokai"). No argument
+                        goes back to the terminal's own colours
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
   --quit                Close the open terminal-code windows
@@ -319,9 +320,37 @@ function swatch(color: string): string {
   return `\x1b[48;2;${r};${g};${b}m   \x1b[0m`;
 }
 
-async function themeCommand(file?: string): Promise<number> {
-  if (file) {
-    const error = setThemeFile(file);
+/** Hand a color theme name to every open window, and stage it for the ones
+ * not open yet. The bridge writes it where the theme picker would, so the
+ * browser keeps the choice across windows and sessions. */
+async function broadcastColorTheme(name: string): Promise<number> {
+  requestColorTheme(name);
+  let reached = 0;
+  for (const window of listEndpoints(IPC_DIR)) {
+    await sendToExtension(window.address, { files: [], folders: [], add: false, colorTheme: name })
+      .then(() => {
+        reached += 1;
+      })
+      .catch(() => forgetEndpoint(window));
+  }
+  return reached;
+}
+
+async function themeCommand(argument?: string): Promise<number> {
+  // a name that is not a file on disk selects an installed theme, the way the
+  // editor's theme picker would — "Monokai" is a choice, not a missing file
+  if (argument && !fs.existsSync(argument) && !/[\\/]|\.json5?$/.test(argument)) {
+    const reached = await broadcastColorTheme(argument);
+    process.stdout.write(
+      reached > 0
+        ? `color theme "${argument}" chosen — open windows switch now, and the browser remembers it\n`
+        : `color theme "${argument}" chosen — the next open applies it\n`,
+    );
+    process.stdout.write("if no installed theme has that name, the editor says so and keeps its current one\n");
+    return 0;
+  }
+  if (argument) {
+    const error = setThemeFile(argument);
     if (error) {
       process.stderr.write(`tode: ${error}\n`);
       return 1;
@@ -329,7 +358,10 @@ async function themeCommand(file?: string): Promise<number> {
     installSettings();
     selectTodeTheme();
     installBridge(todeCommand());
-    process.stdout.write(`theme set from ${file} — open windows follow without a reload\n`);
+    // a theme file paints through tode's own theme, so the workbench has to be
+    // wearing it — a named scheme picked earlier would sideline the file
+    await broadcastColorTheme(THEME_NAME);
+    process.stdout.write(`theme set from ${argument} — open windows follow without a reload\n`);
     return 0;
   }
   const released = forgetThemeChoice();
@@ -358,6 +390,9 @@ async function themeCommand(file?: string): Promise<number> {
     `\ntheme ${fingerprint} ${changed ? "written" : "already current"}\nfont ${ensureFont()}\n`,
   );
   if (released) process.stdout.write("the theme file you had set is no longer used\n");
+  // going back to the terminal's colours includes undoing a named scheme
+  // chosen earlier, or the workbench would keep wearing it
+  await broadcastColorTheme(THEME_NAME);
   return 0;
 }
 

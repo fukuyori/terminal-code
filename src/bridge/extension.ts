@@ -41,6 +41,13 @@ interface VscodeApi {
     remoteAuthority?: string;
     openExternal(target: Uri): PromiseLike<boolean>;
   };
+  /** optional: absent in the trimmed test harness, and the resolver then
+   * trusts the given name */
+  extensions?: {
+    all: Array<{
+      packageJSON?: { contributes?: { themes?: Array<{ label?: string; id?: string }> } };
+    }>;
+  };
   window: {
     showErrorMessage(
       message: string,
@@ -88,6 +95,7 @@ export function bridgeMain(ctx: BridgeCtx): void {
   const LIVE_THEME_FILE = ctx.liveThemeFile;
   const QUIT_HINT = ctx.quitHint;
   const STARTUP_OPEN_FILE = ctx.startupOpenFile;
+  const COLOR_THEME_FILE = ctx.colorThemeFile;
 
   const VIEW_COMMANDS: Record<string, string> = { scm: "workbench.view.scm" };
 
@@ -172,6 +180,55 @@ export function bridgeMain(ctx: BridgeCtx): void {
     if (theme.tokenColors) {
       cfg.update("editor.tokenColorCustomizations", { textMateRules: theme.tokenColors }, target);
     }
+  }
+
+  /** The label the workbench knows the wanted theme by. Contributed labels and
+   * ids match case-insensitively, so a typed name lands on the real spelling;
+   * where the extension list cannot be read, the name is trusted as given. */
+  function resolveThemeLabel(name: string): string | null {
+    const list = vscode.extensions?.all;
+    if (!list) return name;
+    const wanted = name.toLowerCase();
+    let sawAny = false;
+    for (const extension of list) {
+      for (const theme of extension.packageJSON?.contributes?.themes ?? []) {
+        sawAny = true;
+        if (theme.id && theme.id.toLowerCase() === wanted) return theme.id;
+        if (theme.label && theme.label.toLowerCase() === wanted) return theme.label;
+      }
+    }
+    return sawAny ? null : name;
+  }
+
+  /** Select a color theme by name, the way the theme picker does: written to
+   * the global layer in the browser, where it persists across windows and
+   * sessions. The ownership watcher sees the change and hands tode's
+   * colorCustomizations back, so the picked theme is what shows. */
+  function applyColorTheme(name: string): void {
+    const label = resolveThemeLabel(name);
+    if (label === null) {
+      void vscode.window.showErrorMessage(
+        `terminal-code: no color theme named "${name}" is installed`,
+        { modal: false },
+      );
+      return;
+    }
+    void vscode.workspace
+      .getConfiguration()
+      .update("workbench.colorTheme", label, vscode.ConfigurationTarget.Global);
+  }
+
+  function applyStartupColorTheme(): void {
+    let parsed: { name?: string } | null;
+    try {
+      parsed = JSON.parse(fs.readFileSync(COLOR_THEME_FILE, "utf8"));
+    } catch {
+      return;
+    }
+    try {
+      fs.rmSync(COLOR_THEME_FILE, { force: true });
+    } catch {}
+    if (parsed?.name) applyColorTheme(parsed.name);
   }
 
   function applyLiveTheme(): void {
@@ -288,6 +345,16 @@ export function bridgeMain(ctx: BridgeCtx): void {
       quitTode();
       return;
     }
+    if (request.colorTheme) {
+      acknowledge();
+      applyColorTheme(request.colorTheme);
+      // whoever asked also staged the choice for windows not yet open; this
+      // window has applied it, and the browser remembers it for the rest
+      try {
+        fs.rmSync(COLOR_THEME_FILE, { force: true });
+      } catch {}
+      return;
+    }
     if (request.theme) {
       if (!todeOwnsTheme()) return;
       applyThemeDocument(request.theme);
@@ -402,6 +469,7 @@ export function bridgeMain(ctx: BridgeCtx): void {
     applyStartupOpen();
 
     claimTheme();
+    applyStartupColorTheme();
     const stopWatchingSettings = watchLiveTheme();
     context.subscriptions.push({ dispose: stopWatchingSettings });
     const stopWatchingOwnership = watchThemeOwnership();

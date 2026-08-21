@@ -18,13 +18,22 @@ import {
 } from "./shortcuts/store";
 
 const BRIDGE_ID = "tode.tode-bridge";
-const BRIDGE_VERSION = "1.5.1";
+const BRIDGE_VERSION = "1.6.0";
 
 export const STARTUP_OPEN_FILE = path.join(DATA_DIR, "startup-open.json");
 
 export function requestStartupOpen(request: Partial<OpenRequest>): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(STARTUP_OPEN_FILE, `${JSON.stringify({ ...request, at: Date.now() })}\n`);
+}
+
+export const COLOR_THEME_FILE = path.join(DATA_DIR, "startup-color-theme.json");
+
+/** A color theme chosen while no window is open: the next window's bridge
+ * applies it and removes the file. No expiry — it is an explicit choice. */
+export function requestColorTheme(name: string): void {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(COLOR_THEME_FILE, `${JSON.stringify({ name })}\n`);
 }
 export const BRIDGE_DIR = path.join(EXTENSIONS_DIR, `${BRIDGE_ID}-${BRIDGE_VERSION}`);
 
@@ -106,6 +115,7 @@ export function installBridge(tode: string[]): boolean {
       liveThemeFile: LIVE_THEME_FILE,
       quitHint: quitHintMessage(),
       startupOpenFile: STARTUP_OPEN_FILE,
+      colorThemeFile: COLOR_THEME_FILE,
     }),
   );
   registerBridge();

@@ -16,6 +16,9 @@ export interface OpenRequest {
   diff?: string[];
   view?: string;
   theme?: Record<string, unknown>;
+  /** select an installed color theme by its label, the way the theme picker
+   * does — the browser keeps the choice, so it outlives the window */
+  colorTheme?: string;
   /** close the window this reaches, the same way the quit chord does */
   quit?: boolean;
 }

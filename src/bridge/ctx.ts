@@ -9,4 +9,7 @@ export interface BridgeCtx {
   liveThemeFile: string;
   quitHint: string;
   startupOpenFile: string;
+  /** where a color theme chosen while no window was open waits for the next
+   * window to apply it */
+  colorThemeFile: string;
 }

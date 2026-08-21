@@ -794,6 +794,95 @@ test("the colour theme is the user's to change, and tode takes its colours back 
   }
 });
 
+test("a color theme chosen by name reaches the workbench, at startup and over the wire", async () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const vm = require("node:vm");
+  const { bridgeSource } = require("../dist/bridge.js");
+  const { listEndpoints, sendToExtension } = require("../dist/ipc.js");
+
+  const settings = new Map();
+  const warnings = [];
+  const sandbox = {
+    process,
+    console,
+    module: { exports: {} },
+    require: (id) => {
+      if (id !== "vscode") return require(id);
+      return {
+        ConfigurationTarget: { Global: 1 },
+        Uri: { parse: (t) => ({ toString: () => t }) },
+        commands: { registerCommand: () => ({ dispose() {} }) },
+        env: { openExternal: () => Promise.resolve(true) },
+        window: {
+          showErrorMessage: (message) => {
+            warnings.push(message);
+            return Promise.resolve();
+          },
+        },
+        extensions: {
+          all: [
+            { packageJSON: { contributes: { themes: [{ label: "Monokai" }] } } },
+            { packageJSON: { contributes: { themes: [{ id: "custom-id", label: "Custom Light" }] } } },
+            { packageJSON: {} },
+          ],
+        },
+        workspace: {
+          getConfiguration: () => ({
+            get: (key) => settings.get(key),
+            inspect: (key) => ({ globalValue: settings.get(key) }),
+            update: (key, value) => {
+              if (value === undefined) settings.delete(key);
+              else settings.set(key, value);
+            },
+          }),
+          onDidChangeConfiguration: () => ({ dispose() {} }),
+        },
+      };
+    },
+  };
+  sandbox.exports = sandbox.module.exports;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tode-color-theme-"));
+  const colorThemeFile = path.join(dir, "startup-color-theme.json");
+  // chosen while no window was open, in the wrong case on purpose
+  fs.writeFileSync(colorThemeFile, JSON.stringify({ name: "monokai" }));
+  vm.runInNewContext(
+    bridgeSource({
+      tode: ["tode"],
+      ipcDir: dir,
+      themeName: "Terminal Code",
+      liveThemeFile: path.join(dir, "live.json"),
+      quitHint: "press it",
+      startupOpenFile: path.join(dir, "startup.json"),
+      colorThemeFile,
+    }),
+    sandbox,
+  );
+  const subscriptions = [];
+  sandbox.module.exports.activate({
+    subscriptions,
+    environmentVariableCollection: { replace() {} },
+  });
+  try {
+    assert.equal(settings.get("workbench.colorTheme"), "Monokai", "the staged choice lands, case fixed");
+    assert.equal(fs.existsSync(colorThemeFile), false, "the staged choice is consumed");
+
+    const [endpoint] = listEndpoints(dir);
+    assert.ok(endpoint, "the bridge advertises its endpoint");
+    await sendToExtension(endpoint.address, { files: [], folders: [], add: false, colorTheme: "custom-id" });
+    assert.equal(settings.get("workbench.colorTheme"), "custom-id", "an id works as well as a label");
+
+    await sendToExtension(endpoint.address, { files: [], folders: [], add: false, colorTheme: "No Such Theme" });
+    assert.equal(settings.get("workbench.colorTheme"), "custom-id", "an unknown name changes nothing");
+    assert.equal(warnings.length, 1, "and says so in the workbench");
+    assert.match(warnings[0], /No Such Theme/);
+  } finally {
+    for (const subscription of subscriptions) subscription.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a theme set from a file survives the next open, and --theme alone gives it back", () => {
   const fs = require("node:fs");
   const os = require("node:os");

@@ -101,10 +101,11 @@ Commands, each as the first argument:
   --timing              Profile terminal-code launch
   --import [editor]     Bring settings, keybindings, snippets and extensions
                         over from vscode compatible editors
-  --theme [file]        Set editor theme from a vscode theme json. It sticks:
+  --theme [file|name]   Set editor theme from a vscode theme json, or pick an
+                        installed color theme by name ("Monokai"). It sticks:
                         every open after it keeps that theme instead of
                         regenerating one from the terminal. `--theme` with no
-                        file goes back to the terminal's own colours
+                        argument goes back to the terminal's own colours
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
   --shutdown            Stop all terminal-code activities
@@ -169,6 +170,13 @@ active, and that is where the terminal's colours come from: the workbench
 reports `--vscode-editor-background` as the terminal's own background. Picking
 a theme in the editor makes the bridge hand those colours back, so the theme
 you picked is what shows.
+
+Picking by name from the command line works too, through the same bridge: what
+never takes in the default layer does take when written where the theme picker
+writes, the user layer in the browser. `tode --theme "Monokai"` switches the
+open windows now and stages the choice for windows not open yet; the browser
+remembers it afterwards, and `tode --theme` with no argument goes back to the
+terminal's own colours.
 
 **Shortcuts.** `tode --shortcut-setup` drives WezTerm on Windows. WezTerm's
 config is a Lua program with no include directive, so the wizard never edits
