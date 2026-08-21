@@ -8,6 +8,31 @@ VS Code inside your terminal
 https://github.com/user-attachments/assets/4ba0d434-896a-4ab3-9c91-5d351dacee08
 
 
+### Windows support (experimental)
+
+This fork adds a native Windows x64 build — no WSL. It has been tested in PowerShell 7 with
+WezTerm, next to the Windows build of
+[terminal-browser](https://github.com/fukuyori/terminal-browser), which is what draws the pane.
+
+Press `Ctrl+Q` to quit. If the terminal owns that chord — WezTerm's leader often does — name
+another one with `TODE_QUIT_CHORD` and the next open remembers it.
+
+Windows-specific changes in this fork include:
+
+- code-server has no Windows build and never has, so Windows runs VSCodium's `reh-web` server:
+  the same OSS vscode server code-server wraps, published for `win32-x64`
+- Paths under `%LOCALAPPDATA%`, a `.cmd` launcher, and background processes given a console of
+  their own with no window, so closing a pane does not take the editor server with it
+- Windows named pipes for talking to open windows, and vscode uris built the way vscode itself
+  compares them
+- tode's settings carried into the workbench in the document it serves, since a workbench in a
+  browser never reads them off disk
+- `tode --quit` to close a window without a chord, and `tode --reset-terminal` to put a pane
+  back after a browser was killed outright
+- The shortcut wizard has no Windows backend yet, and says so rather than failing
+
+See [Windows](#windows) below for the details and for what is not there yet.
+
 ### Install (macOS & Linux):
 
 ```bash
