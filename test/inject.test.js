@@ -78,6 +78,9 @@ test("css lands in the workbench document before the head closes", async () => {
         JSON.parse(settings).webviewEndpoint,
         `http://127.0.0.1:${proxyPort}/static/out/vs/workbench/contrib/webview/browser/pre/`,
       );
+      // the page's own host becomes the remote authority, so resource fetches
+      // stay same-origin and come back through the proxy
+      assert.equal(JSON.parse(settings).remoteAuthority, `127.0.0.1:${proxyPort}`);
     },
   );
 });
@@ -354,7 +357,7 @@ test("tode's settings are handed to the workbench in its own document", () => {
     JSON.parse(
       /data-settings="([^"]*)"/.exec(rewritten)[1].replaceAll("&quot;", '"').replaceAll("&amp;", "&"),
     );
-  const pointed = withConfigurationDefaults(html, {}, "http://127.0.0.1:9/static/pre/");
+  const pointed = withConfigurationDefaults(html, {}, { webviewEndpoint: "http://127.0.0.1:9/static/pre/" });
   assert.equal(unpack(pointed).webviewEndpoint, "http://127.0.0.1:9/static/pre/");
   const owned = `<meta id="vscode-workbench-web-configuration" data-settings="${JSON.stringify({
     webviewEndpoint: "http://theirs/",
@@ -362,7 +365,15 @@ test("tode's settings are handed to the workbench in its own document", () => {
     .replaceAll("&", "&amp;")
     .replaceAll('"', "&quot;")}">`;
   assert.equal(
-    unpack(withConfigurationDefaults(owned, {}, "http://127.0.0.1:9/static/pre/")).webviewEndpoint,
+    unpack(withConfigurationDefaults(owned, {}, { webviewEndpoint: "http://127.0.0.1:9/static/pre/" }))
+      .webviewEndpoint,
     "http://theirs/",
+  );
+
+  // the authority the server named itself is replaced with the page's host —
+  // it is what makes /vscode-remote-resource fetches same-origin
+  assert.equal(
+    unpack(withConfigurationDefaults(html, {}, { remoteAuthority: "127.0.0.1:9" })).remoteAuthority,
+    "127.0.0.1:9",
   );
 });

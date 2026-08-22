@@ -43,12 +43,19 @@ const unescapeAttribute = (value: string) =>
 const escapeAttribute = (value: string) =>
   value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
 
+export interface PageOptions {
+  webviewEndpoint?: string;
+  remoteAuthority?: string;
+}
+
 export function withConfigurationDefaults(
   html: string,
   defaults: Record<string, unknown>,
-  webviewEndpoint?: string,
+  page: PageOptions = {},
 ): string {
-  if (Object.keys(defaults).length === 0 && !webviewEndpoint) return html;
+  if (Object.keys(defaults).length === 0 && !page.webviewEndpoint && !page.remoteAuthority) {
+    return html;
+  }
   return html.replace(WEB_CONFIGURATION, (all, head: string, body: string, tail: string) => {
     let options: Record<string, unknown>;
     try {
@@ -63,7 +70,16 @@ export function withConfigurationDefaults(
     // which is what lets the synthesized wheel and mouse events terminal-browser
     // sends reach them — the cdn origin in product.json makes them out-of-process
     // iframes that those events never hit. It also takes the network out of it.
-    if (webviewEndpoint && !options.webviewEndpoint) options.webviewEndpoint = webviewEndpoint;
+    if (page.webviewEndpoint && !options.webviewEndpoint) {
+      options.webviewEndpoint = page.webviewEndpoint;
+    }
+    // the server names ITSELF as the remote authority, but the page is served
+    // by this proxy: a fetch of /vscode-remote-resource against the server's
+    // own port is cross-origin from the page, and the server answers it with
+    // no CORS headers, so every theme and extension resource dies with
+    // "Failed to fetch". The page's own host is the authority that works —
+    // resources and the connection both come back through this proxy.
+    if (page.remoteAuthority) options.remoteAuthority = page.remoteAuthority;
     return head + escapeAttribute(JSON.stringify(options)) + tail;
   });
 }
@@ -168,8 +184,16 @@ export function createInjector(
           let patched = body;
           if (body.includes(WORKBENCH_MARKER)) {
             const host = request.headers.host;
-            const endpoint = host ? `http://${host}/static${WEBVIEW_PRE_ROUTE}` : undefined;
-            patched = withConfigurationDefaults(body, readDefaults(), endpoint);
+            patched = withConfigurationDefaults(
+              body,
+              readDefaults(),
+              host
+                ? {
+                    webviewEndpoint: `http://${host}/static${WEBVIEW_PRE_ROUTE}`,
+                    remoteAuthority: host,
+                  }
+                : {},
+            );
             if (css) {
               const style = `<style id="tode-injected">${css}</style>`;
               patched = patched.includes("</head>")
