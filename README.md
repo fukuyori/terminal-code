@@ -161,22 +161,24 @@ Windows support is experimental, and this is what it is made of:
   `%LOCALAPPDATA%\tode\state\ipc`, so `tode <file>` from inside a window still
   reaches the window it is in.
 
-The colour theme works differently here than the name suggests. tode does not
-get the workbench to *select* its theme — no setting reaches the theme service
-on this server, `configurationDefaults` included, and a built-in theme named
-there does not take either. What does reach it is
-`workbench.colorCustomizations`, which the bridge writes over whatever theme is
-active, and that is where the terminal's colours come from: the workbench
-reports `--vscode-editor-background` as the terminal's own background. Picking
-a theme in the editor makes the bridge hand those colours back, so the theme
-you picked is what shows.
+The colour theme has two layers here. The terminal's colours arrive as
+`workbench.colorCustomizations`, which the bridge writes over the active theme
+while the workbench is wearing tode's own — that is how a window follows the
+terminal live, and the workbench reports `--vscode-editor-background` as the
+terminal's own background. Actual theme *selection* works too, by name:
+`tode --theme "Monokai"` switches the open windows and every open after keeps
+it, and picking a theme in the editor makes the bridge hand the terminal's
+colours back and remember that choice instead. `tode --theme` with no argument
+goes back to the terminal's own colours.
 
-Picking by name from the command line works too, through the same bridge: what
-never takes in the default layer does take when written where the theme picker
-writes, the user layer in the browser. `tode --theme "Monokai"` switches the
-open windows now and stages the choice for windows not open yet; the browser
-remembers it afterwards, and `tode --theme` with no argument goes back to the
-terminal's own colours.
+Two repairs make the selection stick, both worth knowing about. The workbench
+fetched theme jsons from the server's own port — cross-origin from the page
+the injector serves, refused without CORS headers — so the injector hands the
+page its own host as the remote authority and everything comes back through
+it. And this workbench never keeps its theme state: its theme service boots on
+an unloaded placeholder and writes that over the chosen setting, so the choice
+lives in `%LOCALAPPDATA%\tode\data\color-theme.json` and the bridge keeps
+enforcing it.
 
 **Shortcuts.** `tode --shortcut-setup` drives WezTerm on Windows. WezTerm's
 config is a Lua program with no include directive, so the wizard never edits
