@@ -1,58 +1,86 @@
 # terminal-code
 
-
-VS Code inside your terminal
-
-
+VS Code inside your terminal — and, in this fork, natively on Windows.
 
 https://github.com/user-attachments/assets/4ba0d434-896a-4ab3-9c91-5d351dacee08
 
+This fork of [zenbu-labs/terminal-code](https://github.com/zenbu-labs/terminal-code)
+adds a Windows x64 build that needs no WSL. It is tested in PowerShell 7 inside
+[WezTerm](https://wezterm.org), next to the Windows build of
+[terminal-browser](https://github.com/fukuyori/terminal-browser), which is what
+draws the editor into the pane. Windows support is experimental; the
+[Windows](#windows) section below has the details and what is not there yet.
 
-### Windows support (experimental)
-
-This fork adds a native Windows x64 build — no WSL. It has been tested in PowerShell 7 with
-WezTerm, next to the Windows build of
-[terminal-browser](https://github.com/fukuyori/terminal-browser), which is what draws the pane.
-
-Press `Ctrl+Q` to quit. If the terminal owns that chord — WezTerm's leader often does — run
-`tode --shortcut-setup` to negotiate it, or name another one with `TODE_QUIT_CHORD` and the
-next open remembers it.
-
-Windows-specific changes in this fork include:
-
-- code-server has no Windows build and never has, so Windows runs VSCodium's `reh-web` server:
-  the same OSS vscode server code-server wraps, published for `win32-x64`
-- Paths under `%LOCALAPPDATA%`, a `.cmd` launcher, and background processes given a console of
-  their own with no window, so closing a pane does not take the editor server with it
-- Windows named pipes for talking to open windows, and vscode uris built the way vscode itself
-  compares them
-- tode's settings carried into the workbench in the document it serves, since a workbench in a
-  browser never reads them off disk
-- `tode --quit` to close a window without a chord, and `tode --reset-terminal` to put a pane
-  back after a browser was killed outright
-- The shortcut wizard drives WezTerm on Windows, through a config wrapper the
-  `WEZTERM_CONFIG_FILE` user environment variable points at — the user's Lua is
-  never edited. Other terminals still get a clear "not supported" and step aside
-
-See [Windows](#windows) below for the details and for what is not there yet.
-
-### Install (macOS & Linux):
-
-```bash
-curl -fsSl https://tode.sh/install | bash
-```
-
-### Install (Windows, experimental)
-
-There is no published Windows release yet, so a Windows install is built from
-this checkout. See [Windows](#windows) below for what is different there and
-what is not supported yet.
+### Install on Windows
 
 1. Install [terminal-browser for Windows](https://github.com/fukuyori/terminal-browser/releases)
-   (the `terminal-browser-<version>-windows-x64.exe` installer) and a terminal
-   that speaks the kitty graphics protocol — [WezTerm](https://wezterm.org) is
-   the one this has been tested in.
-2. Build and install tode:
+   — the `terminal-browser-<version>-windows-x64.exe` installer — and a terminal
+   that speaks the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
+   WezTerm is the one this is tested in.
+2. Install tode from the [releases page](https://github.com/fukuyori/terminal-code/releases):
+   run `tode-<version>-windows-x64.exe`. It is signed, installs per-user under
+   `%LOCALAPPDATA%\Programs\tode` without elevation, and offers to add `tode`
+   to your user PATH.
+3. Open a new terminal and run `tode`.
+
+The first open fetches VSCodium's `reh-web` server — the same OSS vscode server
+code-server wraps, published for `win32-x64` — into
+`%LOCALAPPDATA%\tode\data\vscodium-server`. Extensions come from Open VSX.
+
+Later releases arrive through tode itself:
+
+```powershell
+tode --upgrade --check   # is there a newer build?
+tode --upgrade           # take it
+```
+
+### Using it
+
+```powershell
+tode                     # open the current folder
+tode <folder>            # open a folder
+tode <file>              # open a file, in the window you are in if there is one
+tode -g <file:line:col>  # open at a position
+tode --review            # open on the source control panel
+```
+
+Inside a tode window, `tode <file>` reaches that same window through a named
+pipe, so the shell you get in the integrated terminal works the way `code` does.
+
+**Quitting.** `Ctrl+Q` quits. If your terminal owns that chord — WezTerm's
+`config.leader` often does — run `tode --shortcut-setup`: the wizard finds
+every chord the editor needs that the terminal holds and frees or moves them,
+WezTerm included. Or name another quit chord by hand and the next open
+remembers it:
+
+```powershell
+$env:TODE_QUIT_CHORD = "ctrl+shift+q"
+tode
+```
+
+`tode --quit` closes the open windows from any shell, and `tode --reset-terminal`
+puts a pane back if a browser was ever killed outright.
+
+**Colours.** By default the editor follows your terminal's palette. To wear a
+theme instead:
+
+```powershell
+tode --theme "Monokai"      # any installed color theme, by name
+tode --theme mytheme.json   # or a vscode theme file
+tode --theme                # back to the terminal's own colours
+```
+
+The choice sticks across opens, and picking a theme inside the editor sticks
+the same way.
+
+**Settings and extensions.** `tode --import` brings settings, keybindings,
+snippets and extensions over from a vscode-compatible editor already on the
+machine; `tode --install-extension <id>` installs one from Open VSX. The full
+command list is under [Usage](#usage).
+
+### Building from the checkout
+
+For working on tode itself, a dev install replaces the released one:
 
 ```powershell
 npm install
@@ -60,16 +88,44 @@ npm run dist:windows
 ```
 
 That stages the build into `%LOCALAPPDATA%\Programs\tode`, writes
-`bin\tode.cmd`, and adds that `bin` directory to the user PATH. Open a new
-terminal and run `tode`.
+`bin\tode.cmd`, and adds that `bin` directory to the user PATH. A build is
+named after the upstream version this fork builds on plus its own revision,
+the way terminal-browser's Windows builds are: `0.1.0-win.2` is the second
+Windows build on upstream `0.1.0`. The current one is the `$TodeWindowsVersion`
+default at the top of `scripts\stage-windows.ps1`, shared by the dev install
+and the release scripts — edit that line to cut a new one, or pass `-Version`
+for a one-off. It ends up in `VERSION`, which is what `tode --version` reports.
+Cutting a release is described under [Windows](#windows).
 
-A build is named after the upstream version this fork builds on plus its own
-revision, the way terminal-browser's Windows builds are: `0.1.0-win.2` would be
-the second Windows build on upstream `0.1.0`. The current one is the
-`$TodeWindowsVersion` default at the top of `scripts\stage-windows.ps1`, shared
-by the dev install and the release scripts — edit that line to cut a new one,
-or pass `-Version` for a one-off. It ends up in `VERSION`, which is what
-`tode --version` reports.
+### What this fork changes
+
+- code-server has no Windows build and never has, so Windows runs VSCodium's
+  `reh-web` server: the same OSS vscode server code-server wraps, published for
+  `win32-x64`
+- Paths under `%LOCALAPPDATA%`, a `.cmd` launcher, and background processes
+  given a console of their own with no window, so closing a pane does not take
+  the editor server with it
+- Windows named pipes for talking to open windows, and vscode uris built the
+  way vscode itself compares them
+- tode's settings carried into the workbench in the document it serves, since
+  a workbench in a browser never reads them off disk; webviews and resources
+  served through that same document's origin, which is what makes the markdown
+  preview scroll and themes load
+- `tode --quit` to close a window without a chord, and `tode --reset-terminal`
+  to put a pane back after a browser was killed outright
+- The shortcut wizard drives WezTerm on Windows, through a config wrapper the
+  `WEZTERM_CONFIG_FILE` user environment variable points at — the user's Lua is
+  never edited. Other terminals still get a clear "not supported" and step aside
+- A release channel of its own: signed installers on GitHub releases, which
+  `tode --upgrade` follows
+
+### Install on macOS & Linux
+
+Upstream's installer, unchanged:
+
+```bash
+curl -fsSl https://tode.sh/install | bash
+```
 
 ### Usage
 ```
@@ -215,8 +271,8 @@ Not there yet:
   releases](https://github.com/fukuyori/terminal-code/releases): the `windows`
   channel reads `latest.json` off the newest release there, and
   `--upgrade --version <v>` reads the `manifest.json` inside the `v<v>` tag.
-  Until a release is published the check reports a 404 — re-run
-  `npm run dist:windows` from the checkout in the meantime.
+  A dev install from the checkout is on the same channel, so `tode --upgrade`
+  from one replaces it with the newest release.
 
   Cutting a release from a checkout is three steps, each its own script:
 
