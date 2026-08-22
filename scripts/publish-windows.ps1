@@ -21,6 +21,9 @@
 param(
     [string]$Version,
     [string]$Repo = "fukuyori/terminal-code",
+    # gh cuts the tag from the repo's default branch, which is upstream's main
+    # here — the windows build lives on this branch, so the tag must too
+    [string]$Target = "windows-native",
     [switch]$AllowUnsigned,
     [switch]$ScanOnly,
     [switch]$SkipScan
@@ -138,7 +141,7 @@ $notes = @(
     if ($installer) { "``$($installer.Name)`` installs per-user; the zip is what the upgrade channel downloads." }
     else { "The zip is what the upgrade channel downloads." }
 ) -join "`n"
-& gh release create "v$Version" @assets --repo $Repo --title "tode $Version" --notes $notes
+& gh release create "v$Version" @assets --repo $Repo --target $Target --title "tode $Version" --notes $notes
 if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
 
 Write-Output "published https://github.com/$Repo/releases/tag/v$Version"
