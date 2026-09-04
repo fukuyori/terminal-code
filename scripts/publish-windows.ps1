@@ -135,13 +135,35 @@ if ($installer -and (Get-AuthenticodeSignature $installer.FullName).Status -ne "
 }
 
 Write-Output "==> publishing v$Version to $Repo"
+$tag = "v$Version"
+$targetCommit = (& gh api "repos/$Repo/commits/$Target" --jq .sha).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $targetCommit) {
+    throw "could not resolve release target $Target in $Repo"
+}
+
+# GitHub's release endpoint can reject a non-default branch as
+# target_commitish while trying to create the tag and release together. Create
+# the lightweight tag ref first, then require gh release create to use it.
+$tagRef = & gh api "repos/$Repo/git/ref/tags/$tag" --jq .object.sha 2>$null
+if ($LASTEXITCODE -eq 0) {
+    $tagCommit = (& gh api "repos/$Repo/commits/$tag" --jq .sha).Trim()
+    if ($LASTEXITCODE -ne 0 -or $tagCommit -ne $targetCommit) {
+        throw "$tag already exists but does not point to $targetCommit"
+    }
+    Write-Output "==> using existing tag $tag at $targetCommit"
+} else {
+    & gh api --method POST "repos/$Repo/git/refs" -f "ref=refs/tags/$tag" -f "sha=$targetCommit" *> $null
+    if ($LASTEXITCODE -ne 0) { throw "could not create $tag at $targetCommit" }
+    Write-Output "==> created tag $tag at $targetCommit"
+}
+
 $notes = @(
     "Windows x64 build. ``tode --upgrade`` picks this up."
     ""
     if ($installer) { "``$($installer.Name)`` installs per-user; the zip is what the upgrade channel downloads." }
     else { "The zip is what the upgrade channel downloads." }
 ) -join "`n"
-& gh release create "v$Version" @assets --repo $Repo --target $Target --title "tode $Version" --notes $notes
+& gh release create $tag @assets --repo $Repo --verify-tag --title "tode $Version" --notes $notes
 if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
 
 Write-Output "published https://github.com/$Repo/releases/tag/v$Version"
