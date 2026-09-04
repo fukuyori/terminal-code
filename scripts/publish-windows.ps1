@@ -79,16 +79,16 @@ if (-not $SkipScan) {
     $mpcmd = Resolve-MpCmdRun
     if ($mpcmd) {
         $scanTargets = @($zip) + $(if ($installer) { @($installer.FullName) } else { @() })
-        foreach ($target in $scanTargets) {
-            Write-Output "==> defender scan $(Split-Path -Leaf $target)"
+        foreach ($scanTarget in $scanTargets) {
+            Write-Output "==> defender scan $(Split-Path -Leaf $scanTarget)"
             # -DisableRemediation: a detection should stop the release, not
             # quarantine the file we would want to inspect
-            & $mpcmd -Scan -ScanType 3 -File $target -DisableRemediation
+            & $mpcmd -Scan -ScanType 3 -File $scanTarget -DisableRemediation
             if ($LASTEXITCODE -eq 2) {
-                throw "Windows Defender flagged $target; do not publish — if it is a false positive, report it at https://www.microsoft.com/en-us/wdsi/filesubmission"
+                throw "Windows Defender flagged $scanTarget; do not publish — if it is a false positive, report it at https://www.microsoft.com/en-us/wdsi/filesubmission"
             }
             if ($LASTEXITCODE -ne 0) {
-                Write-Warning "MpCmdRun exited $LASTEXITCODE for $target (not a detection, but the scan did not finish)"
+                Write-Warning "MpCmdRun exited $LASTEXITCODE for $scanTarget (not a detection, but the scan did not finish)"
             }
         }
     } else {
