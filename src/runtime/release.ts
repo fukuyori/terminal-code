@@ -12,7 +12,9 @@ import { BROWSER_HOME, RUNTIME_DIR, VENDOR_DIR, WINDOWS } from "./paths";
 import type { Command } from "./platform";
 import { copyTree, extractArchive, versionMatches } from "./platform";
 
-export const PINNED_VERSION = "v0.5.8";
+// The Windows fork is based on v0.8.0 and carries its own -win revision.
+// versionMatches() accepts that suffix while still rejecting a different base.
+export const PINNED_VERSION = WINDOWS ? "v0.8.0" : "v0.7.3";
 
 const RELEASE_ORIGIN = process.env.TODE_RELEASE_ORIGIN ?? "https://terminal-browser.sh/install";
 
@@ -41,16 +43,12 @@ export interface Release {
 
 export type Source = "override" | "vendored" | "pinned" | "cloned" | "downloaded" | "installed";
 
-/** The platform-arch pair release tables are keyed by, here and on tode's own
- * release worker. One computation, shared by everything that picks a build. */
 export function targetTriple(): string {
   const platform = process.platform === "darwin" ? "darwin" : WINDOWS ? "win32" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   return `${platform}-${arch}`;
 }
 
-/** The copy that ships inside the release. A normal install always resolves
- * here, so the first run costs no download and needs no network. */
 const VENDORED = path.join(VENDOR_DIR, "terminal-browser");
 
 export interface Runtime {

@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    The staging shared by dist-windows.ps1 and release-windows.ps1.
+    The staging shared by the Windows build and development-install scripts.
 
 .DESCRIPTION
     Dot-source this file for Invoke-TodeBuild and New-TodeStage. A dev install
-    and a release zip carry the identical layout (dist\, assets\, config\,
+    and a packaged build carry the identical layout (dist\, assets\, config\,
     bin\tode.cmd, VERSION, CHANNEL, package.json), so the layout is written
     once, here, and the callers only differ in where the stage goes next.
 #>
@@ -12,7 +12,7 @@
 # The version a Windows build reports: the upstream version this fork builds
 # on plus its own revision, the way terminal-browser's Windows builds are
 # named. Both entry scripts default to this line — edit it to cut a new one.
-$TodeWindowsVersion = "0.1.0-win.2"
+$TodeWindowsVersion = "0.3.4-win.1"
 
 function Invoke-TodeBuild([string]$Root) {
     Write-Output "==> building"

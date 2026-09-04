@@ -4,9 +4,13 @@ import fs from "node:fs";
 
 import { writeBrowserScripts } from "./browserglue";
 import { CSS_FILE } from "./codeserver/server";
+import { shimFile } from "./runtime/paths";
 import { commandWith } from "./runtime/platform";
 import type { Runtime } from "./runtime/release";
 import type { TerminalPalette } from "./terminal/osc";
+
+const APP_NAME = "terminal-code";
+const APP_ID = "terminal-code";
 
 export interface LaunchOptions {
   split?: string;
@@ -15,12 +19,38 @@ export interface LaunchOptions {
 }
 
 function browserArgv(url: string, options: LaunchOptions): string[] {
-  const argv = [url, "--app-mode"]
+  const argv = [url, "--app-mode", `--app-name=${APP_NAME}`, `--app-id=${APP_ID}`];
   const scripts = writeBrowserScripts();
   argv.push(`--preload=${scripts.preload}`, `--main-script=${scripts.mainScript}`);
   if (options.split) argv.push("--split", options.split);
   if (options.size) argv.push("--size", options.size);
   return argv;
+}
+
+export function registerSelf(runtime: Runtime): void {
+  const bin = shimFile();
+  if (!fs.existsSync(bin)) return;
+  try {
+    const command = commandWith(runtime.command, [
+      "register-app",
+      "--name",
+      APP_NAME,
+      "--id",
+      APP_ID,
+      "--bin",
+      bin,
+      "--args",
+      ".",
+    ]);
+    const child = spawn(command.file, command.args, {
+      stdio: "ignore",
+      detached: true,
+      windowsHide: true,
+      env: { ...process.env, ...(command.env ?? {}) },
+    });
+    child.on("error", () => {});
+    child.unref();
+  } catch {}
 }
 
 export class Pane {

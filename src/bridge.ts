@@ -11,9 +11,12 @@ import { EXTENSIONS_DIR, LIVE_THEME_FILE } from "./profile";
 import {
   IMPORT_DECISION_ID,
   QUIT_CHORD,
+  QUIT_CHORDS,
   QUIT_COMMAND,
   hintWhen,
   loadDecisions,
+  overrideBindings,
+  quitBindings,
   quitWhen,
 } from "./shortcuts/store";
 
@@ -49,7 +52,11 @@ export const BRIDGE_DIR = path.join(EXTENSIONS_DIR, `${BRIDGE_ID}-${BRIDGE_VERSI
  *
  */
 function manifest(): unknown {
-  const quitBinding = { command: QUIT_COMMAND, key: QUIT_CHORD, when: quitWhen() };
+  const quitBindings = QUIT_CHORDS.map((key) => ({
+    command: QUIT_COMMAND,
+    key,
+    when: quitWhen(key),
+  }));
   const hintBinding =
     QUIT_CHORD === "ctrl+c"
       ? []
@@ -72,7 +79,7 @@ function manifest(): unknown {
       // confirmQuit (the ctrl+c reflex) and quitHint (the redirect toast) are
       // keybinding targets, and a palette full of quit flavours reads as noise
       commands: [{ command: "tode.quit", title: "Quit", category: "terminal-code" }],
-      keybindings: [quitBinding, ...hintBinding],
+      keybindings: [...quitBindings, ...hintBinding],
     },
   };
 }
@@ -81,13 +88,15 @@ function manifest(): unknown {
 export function quitHintMessage(): string {
   const choices = loadDecisions()?.choices ?? {};
   const decision = choices[IMPORT_DECISION_ID] ?? choices[QUIT_CHORD];
-  if (decision?.choice === "editor" && decision.key) {
-    return `Press ${decision.key} to quit terminal-code`;
-  }
+  const chords = [...overrideBindings(), ...quitBindings()]
+    .filter((binding) => binding.command === QUIT_COMMAND)
+    .map((binding) => binding.key)
+    .filter((key, index, all) => all.indexOf(key) === index);
+  if (chords.length) return `Press ${chords.join(" or ")} to quit terminal-code`;
   if (decision?.choice === "keep") {
     return `${QUIT_CHORD} is taken. Quit terminal-code from the command palette, or run: tode --shortcut-setup`;
   }
-  return `Press ${QUIT_CHORD} to quit terminal-code`;
+  return "Quit terminal-code from the command palette, or run: tode --shortcut-setup";
 }
 
 export function bridgeSource(ctx: BridgeCtx): string {

@@ -271,18 +271,19 @@ test("the bridge maps quit per platform, always behind a confirm", () => {
   try {
     installBridge(["/usr/local/bin/tode"]);
     const pkg = JSON.parse(fs.readFileSync(path.join(BRIDGE_DIR, "package.json"), "utf8"));
-    const { QUIT_CHORD } = require("../dist/shortcuts/store.js");
-    const quit = pkg.contributes.keybindings[0];
-    assert.equal(quit.key, QUIT_CHORD);
-    assert.equal(quit.command, "tode.confirmQuit", "quitting always asks first");
-    assert.match(quit.when, /!terminalFocus/, "the quit chord is left alone in the terminal");
+    const { QUIT_CHORD, QUIT_CHORDS } = require("../dist/shortcuts/store.js");
+    const quits = pkg.contributes.keybindings.filter((binding) => binding.command === "tode.confirmQuit");
+    assert.deepEqual(quits.map((binding) => binding.key), QUIT_CHORDS);
+    assert.ok(quits.every((binding) => binding.command === "tode.confirmQuit"), "quitting always asks first");
+    assert.ok(quits.every((binding) => /!terminalFocus/.test(binding.when)),
+      "the quit chords are left alone in the terminal");
     // extension carve-outs are derived from installed claims (none here);
     // that mechanism is covered by the shortcuts store tests
     if (QUIT_CHORD === "ctrl+c") {
       assert.equal(pkg.contributes.keybindings.length, 1, "no redirect hint where ctrl+c is quit itself");
-      assert.match(quit.when, /!editorHasSelection/, "a selection keeps its chord");
+      assert.match(quits[0].when, /!editorHasSelection/, "a selection keeps its chord");
     } else {
-      const hint = pkg.contributes.keybindings[1];
+      const hint = pkg.contributes.keybindings.find((binding) => binding.command === "tode.quitHint");
       assert.equal(hint.key, "ctrl+c");
       assert.equal(hint.command, "tode.quitHint");
       assert.match(hint.when, /!editorHasSelection/, "ctrl+c with a selection must stay copy");
@@ -470,6 +471,8 @@ test("help states the routing rules for a tode terminal", () => {
   });
   assert.match(help, /-r, --reuse-window\s+Open folder in this window/);
   assert.match(help, /--shortcut-setup/);
+  assert.match(help, /--ssh <user@host>/);
+  assert.match(help, /--serve \[path\]/);
 });
 
 test("-r is a real flag now, not something quietly dropped", () => {
@@ -989,7 +992,9 @@ test("TODE_QUIT_CHORD names the quit key, and the next install remembers it", ()
   };
   try {
     process.env.TODE_QUIT_CHORD = "Ctrl+Shift+Q";
-    assert.equal(fresh("../dist/shortcuts/store.js").QUIT_CHORD, "ctrl+shift+q", "the env names it");
+    const selected = fresh("../dist/shortcuts/store.js");
+    assert.equal(selected.QUIT_CHORD, "ctrl+shift+q", "the env names it");
+    assert.deepEqual(selected.QUIT_CHORDS, ["ctrl+shift+q"], "an explicit choice replaces the defaults");
 
     // the install step is what writes it down; importing the module must not
     const { installKeybindings, USER_DIR } = fresh("../dist/profile.js");

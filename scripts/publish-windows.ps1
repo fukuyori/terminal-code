@@ -42,12 +42,12 @@ $latest = Join-Path $out "latest.json"
 $pinned = Join-Path $out "manifest.json"
 foreach ($file in @($zip, $latest, $pinned)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        throw "missing $file; run scripts\release-windows.ps1 first"
+        throw "missing $file; run scripts\build-windows.ps1 and scripts\package-windows.ps1 first"
     }
 }
 $built = (Get-Content -LiteralPath $latest -Raw | ConvertFrom-Json).version
 if ($built -ne $Version) {
-    throw "out\windows-release holds $built, not $Version; re-run scripts\release-windows.ps1"
+    throw "out\windows-release holds $built, not $Version; rebuild and repackage it"
 }
 
 $assets = @($zip, $latest, $pinned)
@@ -56,7 +56,7 @@ $installer = Get-ChildItem -LiteralPath $out -Filter "tode-*-windows-x64.exe" -F
 if ($installer) {
     $assets += $installer.FullName
 } else {
-    Write-Warning "no installer in $out; publishing the zip alone (scripts\installer-windows.ps1 builds one)"
+    Write-Warning "no installer in $out; run scripts\package-windows.ps1 first"
 }
 
 # The updatable engine under ProgramData is the one actually running; the
@@ -131,7 +131,7 @@ if ($ScanOnly) {
 }
 
 if ($installer -and (Get-AuthenticodeSignature $installer.FullName).Status -ne "Valid" -and -not $AllowUnsigned) {
-    throw "$($installer.Name) is unsigned; run scripts\installer-windows.ps1 -Sign, or pass -AllowUnsigned"
+    throw "$($installer.Name) is unsigned; pass -AllowUnsigned to publish this unsigned build"
 }
 
 Write-Output "==> publishing v$Version to $Repo"

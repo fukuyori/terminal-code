@@ -591,9 +591,10 @@ test("the quit chord lives at user level, unless a decision moved or surrendered
   try {
     const store = freshRequire("../dist/shortcuts/store.js");
     const bindings = store.quitBindings();
-    assert.equal(bindings.length, 1, "undecided means tode wins, above every extension");
-    assert.equal(bindings[0].key, store.QUIT_CHORD);
-    assert.equal(bindings[0].command, "tode.confirmQuit", "quitting always asks first");
+    assert.deepEqual(bindings.map((binding) => binding.key), store.QUIT_CHORDS,
+      "undecided means every default quit chord wins, above every extension");
+    assert.ok(bindings.every((binding) => binding.command === "tode.confirmQuit"),
+      "quitting always asks first");
     if (store.QUIT_CHORD === "ctrl+c") {
       assert.equal(
         bindings[0].when,
@@ -607,13 +608,16 @@ test("the quit chord lives at user level, unless a decision moved or surrendered
     }
 
     store.saveDecisions({ version: 1, terminal: "ghostty", choices: { [store.QUIT_CHORD]: { choice: "terminal" } } });
-    assert.equal(store.quitBindings().length, 1, "a freed terminal chord still quits in tode");
+    assert.deepEqual(store.quitBindings().map((binding) => binding.key), store.QUIT_CHORDS,
+      "a freed terminal chord still quits in tode");
 
     store.saveDecisions({ version: 1, terminal: "ghostty", choices: { [store.IMPORT_DECISION_ID]: { choice: "editor", key: "ctrl+alt+q" } } });
-    assert.deepEqual(store.quitBindings(), [], "a moved quit is carried by the fallback instead");
+    assert.deepEqual(store.quitBindings().map((binding) => binding.key), store.QUIT_CHORDS.slice(1),
+      "moving the primary leaves any secondary default in place");
 
     store.saveDecisions({ version: 1, terminal: "ghostty", choices: { [store.IMPORT_DECISION_ID]: { choice: "keep" } } });
-    assert.deepEqual(store.quitBindings(), [], "a surrendered quit writes nothing");
+    assert.deepEqual(store.quitBindings().map((binding) => binding.key), store.QUIT_CHORDS.slice(1),
+      "surrendering the primary leaves any secondary default in place");
 
     // claim decisions become vscode's own removal entries, never edits
     store.saveDecisions({ version: 1, terminal: "ghostty", choices: {
@@ -783,10 +787,13 @@ test("an import decision on any builtin writes its override, command staged on t
         [store.IMPORT_DECISION_ID]: { choice: "editor", key: "ctrl+shift+q" },
       },
     });
-    assert.deepEqual(store.overrideBindings().sort((a, b) => a.key.localeCompare(b.key)), [
+    const expected = [
       { key: "ctrl+alt+w", command: "workbench.action.closeEditorsInGroup", when: "!terminalFocus" },
-      { key: "ctrl+shift+q", command: "tode.confirmQuit", when: "!terminalFocus" },
-    ]);
+    ];
+    if (!store.QUIT_CHORDS.includes("ctrl+shift+q")) {
+      expected.push({ key: "ctrl+shift+q", command: "tode.confirmQuit", when: "!terminalFocus" });
+    }
+    assert.deepEqual(store.overrideBindings().sort((a, b) => a.key.localeCompare(b.key)), expected);
   } finally {
     process.env.XDG_DATA_HOME = prev.XDG_DATA_HOME;
     process.env.XDG_STATE_HOME = prev.XDG_STATE_HOME;
@@ -804,21 +811,28 @@ test("the quit hint follows the wizard's decisions, import decision first", () =
     const { quitHintMessage } = freshRequire("../dist/bridge.js");
     const store = require("../dist/shortcuts/store.js");
 
-    assert.equal(quitHintMessage(), `Press ${store.QUIT_CHORD} to quit terminal-code`);
+    assert.equal(quitHintMessage(), `Press ${store.QUIT_CHORDS.join(" or ")} to quit terminal-code`);
 
     store.saveDecisions({
       version: 1,
       terminal: "ghostty",
       choices: { [store.QUIT_CHORD]: { choice: "editor", key: "ctrl+alt+q" } },
     });
-    assert.equal(quitHintMessage(), "Press ctrl+alt+q to quit terminal-code");
+    assert.equal(
+      quitHintMessage(),
+      `Press ${["ctrl+alt+q", ...store.QUIT_CHORDS.slice(1)].join(" or ")} to quit terminal-code`,
+    );
 
     store.saveDecisions({
       version: 1,
       terminal: "ghostty",
       choices: { [store.QUIT_CHORD]: { choice: "keep" } },
     });
-    assert.match(quitHintMessage(), /command palette/);
+    if (store.QUIT_CHORDS.length > 1) {
+      assert.equal(quitHintMessage(), `Press ${store.QUIT_CHORDS.slice(1).join(" or ")} to quit terminal-code`);
+    } else {
+      assert.match(quitHintMessage(), /command palette/);
+    }
 
     store.saveDecisions({
       version: 1,

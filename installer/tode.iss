@@ -1,6 +1,6 @@
 ; The Windows installer for this fork's tode build. The payload is what
-; scripts\release-windows.ps1 stages into out\windows-release\tode — the same
-; tree the release zip carries — and scripts\installer-windows.ps1 is what
+; scripts\build-windows.ps1 stages into out\windows-release\tode — the same
+; tree the release zip carries — and scripts\package-windows.ps1 is what
 ; compiles this, deriving the numeric MyAppVersion from the payload's VERSION.
 ; The shape follows terminal-browser's installer so the pair install alike:
 ; per-user under {localappdata}\Programs, a user-PATH task, no elevation.
@@ -8,6 +8,9 @@
 #define MyAppName "tode"
 #ifndef MyAppVersion
 #define MyAppVersion "0.0.0.0"
+#endif
+#ifndef PayloadDir
+#define PayloadDir "..\out\windows-release\tode"
 #endif
 #define MyAppPublisher "Noriaki Fukuyori"
 #define MyAppURL "https://github.com/fukuyori/terminal-code"
@@ -62,7 +65,7 @@ japanese.NeedsBrowser=tode の実行には terminal-browser が必要ですが�
 Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:AdditionalTasks}"; Flags: checkedonce
 
 [Files]
-Source: "..\out\windows-release\tode\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Code]

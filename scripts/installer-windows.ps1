@@ -44,7 +44,7 @@ foreach ($relativePath in $required) {
 
 if (-not $Version) {
     # A Windows file version is four numbers, so the fork revision of
-    # 0.1.0-win.2 becomes the fourth one: 0.1.0.2.
+    # 0.3.4-win.1 becomes the fourth one: 0.3.4.1.
     $payloadVersion = (Get-Content -LiteralPath (Join-Path $payload "VERSION") -Raw).Trim()
     $match = [regex]::Match($payloadVersion, '^v?(?<base>\d+\.\d+\.\d+)(?:-win\.(?<fork>\d+))?$')
     if ($match.Success) {

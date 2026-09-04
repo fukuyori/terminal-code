@@ -8,7 +8,7 @@ import { FONT_FALLBACKS, injectedCss } from "./codeserver/inject";
 import { parseJsonc, readKey, setKeys } from "./jsonc";
 import { DATA_DIR, WINDOWS } from "./runtime/paths";
 import { uriPath } from "./runtime/platform";
-import { CLAIM_DECISION_ID, IMPORT_DECISION_ID, QUIT_CHORD, QUIT_COMMAND, claimBindings, fallbackBindings, hintBindings, loadDecisions, overrideBindings, quitBindings, quitWhen, rememberQuitChord, decisionsStamp } from "./shortcuts/store";
+import { QUIT_CHORDS, QUIT_COMMAND, claimBindings, fallbackBindings, hintBindings, loadDecisions, overrideBindings, quitBindings, quitWhen, rememberQuitChord, decisionsStamp } from "./shortcuts/store";
 import { queryTerminal, withFallbacks } from "./terminal/osc";
 import type { ParsedReplies, TerminalPalette } from "./terminal/osc";
 import { hex } from "./theme/color";
@@ -469,7 +469,7 @@ export function installWebDefaults(): boolean {
 
 export function builtinKeybindings(): Binding[] {
   return [
-    { key: QUIT_CHORD, command: QUIT_COMMAND, when: quitWhen() },
+    ...QUIT_CHORDS.map((key) => ({ key, command: QUIT_COMMAND, when: quitWhen(key) })),
     ...hintBindings(),
   ];
 }
@@ -554,17 +554,19 @@ export function installKeybindings(): boolean {
 
 function quitWinsBindings(theirs: Binding[]): Binding[] {
   const choices = loadDecisions()?.choices ?? {};
-  if (choices[IMPORT_DECISION_ID] || choices[CLAIM_DECISION_ID]) return [];
   const canon = (chord: string) => chord.toLowerCase().split("+").sort().join("+");
-  const shadowed = theirs.some(
-    (entry) =>
-      !!entry.key &&
-      !!entry.command &&
-      !entry.command.startsWith("-") &&
-      canon(entry.key) === canon(QUIT_CHORD) &&
-      entry.command !== QUIT_COMMAND,
-  );
-  return shadowed ? [{ key: QUIT_CHORD, command: QUIT_COMMAND, when: quitWhen() }] : [];
+  return QUIT_CHORDS.flatMap((chord) => {
+    if (choices[`import:${chord}`] || choices[`claim:${chord}`]) return [];
+    const shadowed = theirs.some(
+      (entry) =>
+        !!entry.key &&
+        !!entry.command &&
+        !entry.command.startsWith("-") &&
+        canon(entry.key) === canon(chord) &&
+        entry.command !== QUIT_COMMAND,
+    );
+    return shadowed ? [{ key: chord, command: QUIT_COMMAND, when: quitWhen(chord) }] : [];
+  });
 }
 
 function writeBindings(mine: Binding[], theirs: Binding[]): boolean {

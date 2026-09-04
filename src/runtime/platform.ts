@@ -93,7 +93,7 @@ export function uriPath(target: string): string {
 export const NPM = WINDOWS ? "npm.cmd" : "npm";
 
 /** Compares a version stamp with the version tode pinned. The Windows builds of
- * terminal-browser carry a fork suffix (0.5.8-win.1) on top of the upstream tag
+ * terminal-browser carry a fork suffix (0.8.0-win.1) on top of the upstream tag
  * they were cut from, so the pin has to match the base rather than the whole
  * string. */
 export function versionMatches(found: string | null, wanted: string): boolean {

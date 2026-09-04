@@ -1,5 +1,7 @@
 # terminal-code
 
+[日本語](README.ja.md)
+
 VS Code inside your terminal — and, in this fork, natively on Windows.
 
 https://github.com/user-attachments/assets/4ba0d434-896a-4ab3-9c91-5d351dacee08
@@ -14,8 +16,9 @@ draws the editor into the pane. Windows support is experimental; the
 ### Install on Windows
 
 1. Install [terminal-browser for Windows](https://github.com/fukuyori/terminal-browser/releases)
-   — the `terminal-browser-<version>-windows-x64.exe` installer — and a terminal
-   that speaks the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
+   `0.8.0-win.1` — or another `0.8.0-win.*` revision — using the
+   `terminal-browser-<version>-windows-x64.exe` installer. You also need a
+   terminal that speaks the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
    WezTerm is the one this is tested in.
 2. Install tode from the [releases page](https://github.com/fukuyori/terminal-code/releases):
    run `tode-<version>-windows-x64.exe`. It is signed, installs per-user under
@@ -47,14 +50,15 @@ tode --review            # open on the source control panel
 Inside a tode window, `tode <file>` reaches that same window through a named
 pipe, so the shell you get in the integrated terminal works the way `code` does.
 
-**Quitting.** `Ctrl+Q` quits. If your terminal owns that chord — WezTerm's
-`config.leader` often does — run `tode --shortcut-setup`: the wizard finds
+**Quitting.** On Windows, both `Ctrl+Q` and `Ctrl+Shift+Q` quit, so the latter
+remains available when WezTerm owns `Ctrl+Q` — for example through
+`config.leader`. Run `tode --shortcut-setup` to resolve other conflicts: the wizard finds
 every chord the editor needs that the terminal holds and frees or moves them,
 WezTerm included. Or name another quit chord by hand and the next open
 remembers it:
 
 ```powershell
-$env:TODE_QUIT_CHORD = "ctrl+shift+q"
+$env:TODE_QUIT_CHORD = "ctrl+alt+q"
 tode
 ```
 
@@ -78,6 +82,80 @@ snippets and extensions over from a vscode-compatible editor already on the
 machine; `tode --install-extension <id>` installs one from Open VSX. The full
 command list is under [Usage](#usage).
 
+### New on Windows in 0.3.4-win.1
+
+This release merges the complete upstream `v0.3.4` source into the Windows
+branch. The Windows-specific integration is described below; the full release
+record is in [CHANGELOG.md](CHANGELOG.md).
+
+#### Remote workspaces over SSH
+
+Windows can now keep terminal-browser and the rendered VS Code interface on
+the local machine while running only the editor server on a remote Unix host:
+
+```powershell
+tode --ssh dev@build-box
+tode --ssh build-box ~/src/project
+tode --ssh "dev@build-box -p 2222" ~/src/project
+```
+
+The first command opens the remote home directory, the second opens a remote
+path, and the third shows how SSH options can be passed as one quoted value.
+Entries from the user's OpenSSH configuration can be used as host aliases.
+`user@host:port` is also accepted and is translated to the matching SSH port
+option.
+
+The local side creates a small deployment bundle containing the terminal
+palette, settings, keybindings, snippets, tasks, and an extension list.
+terminal-browser `0.8.0-win.1` copies that bundle to the remote machine, makes
+sure upstream terminal-code `v0.3.4` is installed, prepares its profile, starts
+the remote `--serve` backend, and proxies its network traffic back to the local
+browser. Chromium, drawing, keyboard handling, and the terminal graphics
+protocol therefore stay on Windows instead of crossing the SSH connection.
+
+Management commands that do not need a browser are forwarded directly through
+the system `ssh` command. This includes extension installation, extension
+removal, extension listing, shutdown, and upgrade operations. For example:
+
+```powershell
+tode --ssh build-box --list-extensions
+tode --ssh build-box --install-extension rust-lang.rust-analyzer
+```
+
+The remote bundle currently targets a Unix host because its setup and startup
+entries use POSIX shell tools and paths. Windows needs OpenSSH Client and
+`tar.exe` on `PATH`. Bundle preparation can create multiple SSH connections,
+so key authentication or `ssh-agent` is recommended.
+
+#### Profile bootstrap and extension batching
+
+Remote startup imports the local profile before opening the workspace. Existing
+remote settings are merged through the normal import path; keybindings,
+snippets, and tasks are handled by the same import implementation used by
+`tode --import`. Extensions are compared case-insensitively against the remote
+installation, and only missing entries are sent to the editor server in one
+batch. Version-qualified entries such as `publisher.extension@1.2.3` remain
+qualified. A partial installation failure is reported without hiding the
+extensions that succeeded.
+
+#### terminal-browser application integration
+
+Opening an installed copy of tode now registers it with terminal-browser under
+the stable application id `terminal-code`. Browser panes are opened with the
+same application name and id, allowing terminal-browser to identify them as
+one application and expose terminal-code through its application discovery and
+new-tab UI. Registration is skipped when there is no installed `tode.cmd`, so
+running source files directly does not register a broken launcher.
+
+#### Windows runtime compatibility
+
+The Windows runtime pin is now terminal-browser `v0.8.0`; a fork version such
+as `0.8.0-win.1` is recognized as that compatible base. Windows continues to
+run the separately installed browser in
+`%LOCALAPPDATA%\Programs\terminal-browser` without copying its Electron tree
+into every terminal-code installation. macOS and Linux retain upstream's
+`v0.7.3` pin.
+
 ### Building from the checkout
 
 For working on tode itself, a dev install replaces the released one:
@@ -90,8 +168,8 @@ npm run dist:windows
 That stages the build into `%LOCALAPPDATA%\Programs\tode`, writes
 `bin\tode.cmd`, and adds that `bin` directory to the user PATH. A build is
 named after the upstream version this fork builds on plus its own revision,
-the way terminal-browser's Windows builds are: `0.1.0-win.2` is the second
-Windows build on upstream `0.1.0`. The current one is the `$TodeWindowsVersion`
+the way terminal-browser's Windows builds are: `0.3.4-win.1` is the first
+Windows build on upstream `0.3.4`. The current one is the `$TodeWindowsVersion`
 default at the top of `scripts\stage-windows.ps1`, shared by the dev install
 and the release scripts — edit that line to cut a new one, or pass `-Version`
 for a one-off. It ends up in `VERSION`, which is what `tode --version` reports.
@@ -124,7 +202,7 @@ Cutting a release is described under [Windows](#windows).
 Upstream's installer, unchanged:
 
 ```bash
-curl -fsSl https://tode.sh/install | bash
+curl -fsSL https://tode.sh/install | bash
 ```
 
 ### Usage
@@ -151,6 +229,7 @@ Options:
   --size <fraction>     The % a new split will take up (0.2 to 0.95)
   --timing              Report how long each stage of this open took
   --review              Open on the source control panel
+  --ssh <user@host>     Run terminal-code on an ssh server
 
 Commands, each as the first argument:
   --shortcut-setup      Resolve shortcut conflicts between terminal-code and the current terminal
@@ -162,12 +241,17 @@ Commands, each as the first argument:
                         every open after it keeps that theme instead of
                         regenerating one from the terminal. `--theme` with no
                         argument goes back to the terminal's own colours
+  --serve [path]        Start code server and print its url
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
   --shutdown            Stop all terminal-code activities
   --uninstall [--yes]   Remove all terminal-code data from this machine
 
 ```
+
+### How does it work?
+
+terminal-code combines [terminal-browser](https://github.com/zenbu-labs/terminal-browser) (a browser in the terminal) and [code-server](https://github.com/coder/code-server) (VS Code in the browser) to bring VS Code to the terminal. You should look into these projects for more details!
 
 
 
@@ -177,10 +261,24 @@ Your terminal and terminal-code will likely conflict on important shortcuts, mea
 shortcut conflicts you can run `tode --shortcut-setup`, and you will be placed into an interactive wizard that lets you change terminal or terminal-code shortcuts
 so they no longer conflict
 
-### How does it work?
 
-terminal-code combines [terminal-browser](https://github.com/zenbu-labs/terminal-browser) (a browser in the terminal) and [code-server](https://github.com/coder/code-server) (VS Code in the browser) to bring VS Code to the terminal. You should look into these projects for more details!
 
+### SSH
+
+The recommended way to use terminal-code over ssh is running `tode --ssh <ssh arguments>` on your local machine.
+
+The alternative is running `tode` directly on the machine you are shh'd into. This will work, but
+requires:
+- every single frame drawn by vscode to be sent over the network
+- all user input to be sent over the network before vscode can react
+- misses out some [extra optimizations](https://sw.kovidgoyal.net/kitty/graphics-protocol/#local-client)
+
+`tode --ssh` improves on this by running only the backend of vscode on the remote machine. The frontend is still running locally on your device, so vscode is able to respond to interactions ~instantly. Any network requests will get proxied over the ssh connection.
+
+On Windows this requires terminal-browser `0.8.0-win.1`, plus OpenSSH Client
+and `tar.exe` on `PATH`. SSH host aliases are supported. Key authentication or
+`ssh-agent` is recommended because preparing the remote bundle may open more
+than one SSH connection. The remote bundle currently supports Unix hosts.
 
 ### Windows
 
@@ -242,15 +340,16 @@ it: it writes a wrapper (`tode-wezterm.lua`, next to your `wezterm.lua`) that
 loads the real config and appends tode's overrides after it, where later
 entries win, and points the `WEZTERM_CONFIG_FILE` user environment variable at
 that wrapper. Restart WezTerm after applying — it reads that variable at
-startup. The one chord that usually matters is `Ctrl+Q`, which quits tode and
-which WezTerm's `config.leader` often owns; the wizard can free the leader or
-carry it to another chord, keeping its timeout. `tode --shortcut-setup --undo`
+startup. `Ctrl+Q` often matters because WezTerm's `config.leader` may own it;
+Windows therefore also binds `Ctrl+Shift+Q` to quit by default. The wizard can
+free the leader or carry it to another chord, keeping its timeout.
+`tode --shortcut-setup --undo`
 removes the wrapper and puts the variable back the way it was. Terminals other
 than WezTerm have no Windows backend yet — there the wizard says so and steps
 aside, and `TODE_QUIT_CHORD` still names the quit chord by hand:
 
 ```powershell
-$env:TODE_QUIT_CHORD = "ctrl+shift+q"
+$env:TODE_QUIT_CHORD = "ctrl+alt+q"
 tode
 ```
 
@@ -274,22 +373,32 @@ Not there yet:
   A dev install from the checkout is on the same channel, so `tode --upgrade`
   from one replaces it with the newest release.
 
-  Cutting a release from a checkout is three steps, each its own script:
+  Building and packaging from a checkout uses two scripts. The first compiles
+  and stages the payload; the second creates the upgrade ZIP, manifests, and
+  Inno Setup installer:
 
   ```powershell
-  npm run release:windows                 # 1. stage + zip + manifests
-  scripts\installer-windows.ps1 -Sign     # 2. Inno Setup installer, signed
-  scripts\publish-windows.ps1             # 3. gh release create v<version>
+  npm run build:windows                   # 1. compile + stage payload
+  npm run package:windows                 # 2. ZIP + manifests + Inno Setup
   ```
 
-  Step 2 needs Inno Setup 6 and, for `-Sign`, `CODESIGN_CERT` set to the
-  signing certificate's subject name; without `-Sign` it builds unsigned and
-  step 3 refuses it unless told `-AllowUnsigned`. Step 3 also runs the
-  artifacts through the local Windows Defender engine first — and through
-  VirusTotal when `VT_API_KEY` is set, which uploads the installer there —
-  and a detection stops the release; `-ScanOnly` runs just those checks. The
-  version all three agree on is the default at the top of
-  `scripts\stage-windows.ps1` — the same line a dev install reports.
+  `package:windows` requires Inno Setup. terminal-code has no native
+  `tode.exe`; the installed entry point is `bin\tode.cmd`, so these scripts do
+  not provide a `-Sign` option. Inno Setup includes its standard uninstaller.
+  Both scripts use the version at the top of `scripts\stage-windows.ps1` — the
+  same value a dev install reports.
+
+  Publishing is a separate, explicitly invoked operation:
+
+  ```powershell
+  npm run publish:windows                 # gh release create v<version>
+  ```
+
+  The publishing script runs the artifacts through the local Windows Defender
+  engine first and, when `VT_API_KEY` is set, uploads the installer to
+  VirusTotal. A detection stops publication; `-ScanOnly` runs only those
+  checks. Because the generated files are unsigned, publishing requires the
+  existing `-AllowUnsigned` opt-in.
 
 If you would rather not run any of this, the Linux build inside
 [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) is still an option.

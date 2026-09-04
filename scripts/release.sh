@@ -17,7 +17,8 @@ STAGE="$OUT/tode"
 PINNED="$(node -e '
   const fs = require("fs");
   const src = fs.readFileSync(process.argv[1], "utf8");
-  const found = src.match(/PINNED_VERSION\s*=\s*"([^"]+)"/);
+  const found = src.match(/PINNED_VERSION\s*=\s*WINDOWS\s*\?\s*"[^"]+"\s*:\s*"([^"]+)"/)
+    ?? src.match(/PINNED_VERSION\s*=\s*"([^"]+)"/);
   if (!found) { console.error("no PINNED_VERSION in release.ts"); process.exit(1); }
   console.log(found[1]);
 ' "$ROOT/src/runtime/release.ts")"

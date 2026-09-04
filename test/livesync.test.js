@@ -14,6 +14,11 @@ const { generateTheme } = require("../dist/theme/generate.js");
 const RED = withFallbacks({ background: [0, 0, 0], foreground: [255, 255, 255], ansi: new Array(16).fill(null) });
 const BLUE = withFallbacks({ background: [0, 0, 40], foreground: [230, 230, 255], ansi: new Array(16).fill(null) });
 
+function restoreEnv(name, value) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
 test("a colours file with both ends missing is not a palette", () => {
   assert.equal(parseRawColors("{}"), null);
   assert.equal(parseRawColors('{"background":[0,0,0]}'), null);
@@ -81,8 +86,9 @@ function loadBridgeSandbox(extensionSource, fakeHome, vscodeOverrides = {}) {
 
 test("the bridge applies the live theme on activation and again on every change, without a reload", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tode-live-bridge-"));
-  const prev = process.env.XDG_DATA_HOME;
+  const prev = { data: process.env.XDG_DATA_HOME, state: process.env.XDG_STATE_HOME };
   process.env.XDG_DATA_HOME = path.join(home, "share");
+  process.env.XDG_STATE_HOME = path.join(home, "state");
   for (const key of Object.keys(require.cache)) delete require.cache[key];
   const { installBridge, BRIDGE_DIR } = require("../dist/bridge.js");
   const { LIVE_THEME_FILE } = require("../dist/profile.js");
@@ -132,7 +138,8 @@ test("the bridge applies the live theme on activation and again on every change,
       for (const sub of context.subscriptions) sub.dispose();
     }
   } finally {
-    process.env.XDG_DATA_HOME = prev;
+    restoreEnv("XDG_DATA_HOME", prev.data);
+    restoreEnv("XDG_STATE_HOME", prev.state);
     fs.rmSync(home, { recursive: true, force: true });
     for (const key of Object.keys(require.cache)) delete require.cache[key];
   }
@@ -140,8 +147,9 @@ test("the bridge applies the live theme on activation and again on every change,
 
 test("the startup marker replays views and diffs once, then burns", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tode-review-"));
-  const prev = process.env.XDG_DATA_HOME;
+  const prev = { data: process.env.XDG_DATA_HOME, state: process.env.XDG_STATE_HOME };
   process.env.XDG_DATA_HOME = path.join(home, "share");
+  process.env.XDG_STATE_HOME = path.join(home, "state");
   for (const key of Object.keys(require.cache)) delete require.cache[key];
   const { installBridge, requestStartupOpen, BRIDGE_DIR } = require("../dist/bridge.js");
   try {
@@ -186,7 +194,8 @@ test("the startup marker replays views and diffs once, then burns", async () => 
       for (const sub of context2.subscriptions) sub.dispose();
     }
   } finally {
-    process.env.XDG_DATA_HOME = prev;
+    restoreEnv("XDG_DATA_HOME", prev.data);
+    restoreEnv("XDG_STATE_HOME", prev.state);
     fs.rmSync(home, { recursive: true, force: true });
     for (const key of Object.keys(require.cache)) delete require.cache[key];
   }
@@ -207,7 +216,7 @@ test("setLiveTheme writes the theme document the bridge will read back", () => {
     const changedAgain = setLiveTheme(generateTheme(RED));
     assert.equal(changedAgain, false, "writing the same theme twice is a no-op");
   } finally {
-    process.env.XDG_DATA_HOME = prev;
+    restoreEnv("XDG_DATA_HOME", prev);
     fs.rmSync(home, { recursive: true, force: true });
     for (const key of Object.keys(require.cache)) delete require.cache[key];
   }
@@ -249,7 +258,7 @@ test("a vscode theme file, comments and all, lands in the live slot and the exte
     fs.writeFileSync(file, `{ "just": "not a theme" }`);
     assert.match(setThemeFile(file) ?? "", /not a vscode theme/);
   } finally {
-    process.env.XDG_DATA_HOME = prev;
+    restoreEnv("XDG_DATA_HOME", prev);
     fs.rmSync(home, { recursive: true, force: true });
     for (const key of Object.keys(require.cache)) delete require.cache[key];
   }
@@ -324,9 +333,12 @@ test("the browser main script turns a colours message into a theme at every wind
 
 test("a theme over the window socket is applied live and persisted for the next reload", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tode-socket-theme-"));
-  // a unix socket path tops out at 104 bytes on macOS, and os.tmpdir() is
-  // already most of that — the state home must stay short
-  const state = fs.mkdtempSync("/tmp/tode-st-");
+  // A unix socket path tops out at 104 bytes on macOS, and os.tmpdir() is
+  // already most of that, so keep the short path there. Windows uses a named
+  // pipe and must use its real temporary directory rather than POSIX /tmp.
+  const state = fs.mkdtempSync(
+    process.platform === "win32" ? path.join(os.tmpdir(), "tode-st-") : "/tmp/tode-st-",
+  );
   const prevData = process.env.XDG_DATA_HOME;
   const prevState = process.env.XDG_STATE_HOME;
   process.env.XDG_DATA_HOME = path.join(home, "share");
@@ -368,8 +380,8 @@ test("a theme over the window socket is applied live and persisted for the next 
       for (const sub of context.subscriptions) sub.dispose();
     }
   } finally {
-    process.env.XDG_DATA_HOME = prevData;
-    process.env.XDG_STATE_HOME = prevState;
+    restoreEnv("XDG_DATA_HOME", prevData);
+    restoreEnv("XDG_STATE_HOME", prevState);
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(state, { recursive: true, force: true });
     for (const key of Object.keys(require.cache)) delete require.cache[key];

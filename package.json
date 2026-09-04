@@ -8,6 +8,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run -s build:pages",
     "build:pages": "node scripts/build-pages.mjs",
+    "build:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+    "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
     "dist": "bash scripts/dist.sh",
     "dist:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dist-windows.ps1",
     "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-windows.ps1",

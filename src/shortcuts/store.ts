@@ -79,8 +79,15 @@ function rememberedChord(): string | null {
  * unless the terminal already owns that chord and will never pass it on. The
  * wizard negotiates this where it has a backend; where it does not (Windows),
  * TODE_QUIT_CHORD names the chord outright and the next open remembers it. */
+const configuredQuitChord = chosenChord() ?? rememberedChord();
+
 export const QUIT_CHORD =
-  chosenChord() ?? rememberedChord() ?? (process.platform === "darwin" ? "ctrl+c" : "ctrl+q");
+  configuredQuitChord ?? (process.platform === "darwin" ? "ctrl+c" : "ctrl+q");
+
+export const QUIT_CHORDS =
+  process.platform === "win32" && !configuredQuitChord
+    ? [QUIT_CHORD, "ctrl+shift+q"]
+    : [QUIT_CHORD];
 
 /** Persist a chord asked for through the environment. Called from the install
  * step rather than at load, so importing this module writes nothing. */
@@ -119,10 +126,21 @@ export function overrideBindings(): { key: string; command: string; when?: strin
   const choices = loadDecisions()?.choices ?? {};
   const out: { key: string; command: string; when?: string }[] = [];
   for (const [id, decision] of Object.entries(choices)) {
-    if (!id.startsWith("import:")) continue;
+    if (!id.startsWith("import:") && id !== QUIT_CHORD) continue;
     if (decision.choice !== "editor" || !decision.key) continue;
-    const command = decision.command ?? (id === IMPORT_DECISION_ID ? QUIT_COMMAND : null);
+    const command = decision.command ??
+      (id === IMPORT_DECISION_ID || id === QUIT_CHORD ? QUIT_COMMAND : null);
     if (!command) continue;
+    // On Windows, ctrl+shift+q is already a second default quit chord. If the
+    // wizard moves ctrl+q there, retain the existing binding instead of writing
+    // an identical user-level override beside it.
+    if (
+      command === QUIT_COMMAND &&
+      QUIT_CHORDS.some((chord) => chord.toLowerCase() === decision.key?.toLowerCase())
+    ) {
+      const target = choices[`import:${decision.key.toLowerCase()}`] ?? choices[decision.key.toLowerCase()];
+      if (target?.choice !== "editor" && target?.choice !== "keep") continue;
+    }
     out.push({ key: decision.key, command, when: "!terminalFocus" });
   }
   return out;
@@ -134,8 +152,8 @@ export function overrideBindings(): { key: string; command: string; when?: strin
  * without editorTextFocus). */
 const HINT_BASE = "!terminalFocus && !editorHasSelection && (!inputFocus || editorTextFocus)";
 
-export function quitWhen(): string {
-  return QUIT_CHORD === "ctrl+c" ? HINT_BASE : "!terminalFocus";
+export function quitWhen(chord = QUIT_CHORD): string {
+  return chord === "ctrl+c" ? HINT_BASE : "!terminalFocus";
 }
 
 /** The guard on the ctrl+c redirect hint, where ctrl+c is not itself quit —
@@ -152,9 +170,11 @@ export function hintBindings(): { key: string; command: string; when: string }[]
 
 export function quitBindings(): { key: string; command: string; when?: string }[] {
   const choices = loadDecisions()?.choices ?? {};
-  const decision = choices[IMPORT_DECISION_ID] ?? choices[QUIT_CHORD];
-  if (decision?.choice === "editor" || decision?.choice === "keep") return [];
-  return [{ key: QUIT_CHORD, command: QUIT_COMMAND, when: quitWhen() }];
+  return QUIT_CHORDS.flatMap((chord) => {
+    const decision = choices[`import:${chord}`] ?? choices[chord];
+    if (decision?.choice === "editor" || decision?.choice === "keep") return [];
+    return [{ key: chord, command: QUIT_COMMAND, when: quitWhen(chord) }];
+  });
 }
 
 export function fallbackBindings(): { key: string; command: string; when?: string }[] {
