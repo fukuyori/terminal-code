@@ -46,6 +46,8 @@ Commands, each as the first argument:
   --import [editor]     Bring settings, keybindings, snippets and extensions
                         over from vscode compatible editors
   --theme [file]        Set editor theme
+  --enable-transparency Make the editor transparent
+  --disable-transparency Make the editor opaque again
   --serve [path]        Start code server and print its url
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
