@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,21 +18,22 @@ import { importCommand } from "./import/command";
 import { runImport } from "./import/run";
 import type { Editor } from "./import/editors";
 import { runOnboarding } from "./onboarding";
-import { parseGoto, runningWindow, sendToExtension } from "./ipc";
+import { parseGoto, runningWindow, sendToExtension, windowSockets } from "./ipc";
 import type { OpenFile } from "./ipc";
 import { EXTENSIONS_DIR, VSCODE_DIR, registerThemeExtension } from "./profile";
 import {
+  currentTheme,
   ensureFont,
   installCss,
   installKeybindings,
   setLiveTheme,
   setThemeFile,
+  setTransparency,
   installSettings,
   installTheme,
   readPalette,
 } from "./profile";
-import { Pane, launchBrowser, registerSelf } from "./launch";
-import { resolveRuntime, resolveRuntimeWithProgress } from "./runtime/release";
+import { Pane, launchBrowser, registerSelf, shutdownDaemon } from "./launch";
 import { INSTALL_ROOT } from "./runtime/paths";
 import { skillCommand } from "./skill";
 import { sshForward, sshOpen } from "./ssh";
@@ -41,7 +42,7 @@ import type { TerminalPalette } from "./terminal/osc";
 import { uninstallCommand } from "./uninstall";
 import { upgrade } from "./upgrade";
 import { hex } from "./theme/color";
-import { generateTheme, semanticColors } from "./theme/generate";
+import { semanticColors } from "./theme/generate";
 
 // hm? does it ever get installed at home dir local?
 function shimPath(): string {
@@ -61,7 +62,7 @@ async function bootEditorUrl(): Promise<string> {
   installTheme(palette);
   installCss(palette);
   installSettings();
-  setLiveTheme(generateTheme(palette));
+  setLiveTheme(currentTheme(palette));
   installBridge(todeCommand());
   installKeybindings();
   const server = await ensureServer();
@@ -134,6 +135,8 @@ Commands, each as the first argument:
   --import [editor]     Bring settings, keybindings, snippets and extensions
                         over from vscode compatible editors
   --theme [file]        Set editor theme
+  --enable-transparency Make the editor transparent
+  --disable-transparency Make the editor opaque again
   --serve [path]        Start code server and print its url
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
@@ -208,6 +211,7 @@ async function openCommand(args: string[]): Promise<number> {
 
   const positional = diffing || going ? [] : args;
   const wanted = positional.map((argument) => resolveTarget(argument, process.cwd()));
+  registerSelf();
   const files: OpenFile[] = [
     ...wanted.filter((t) => t.file).map((t) => ({ path: t.file! })),
     ...gotos.map((goto) => ({ ...goto, path: path.resolve(process.cwd(), goto.path) })),
@@ -247,16 +251,16 @@ async function openCommand(args: string[]): Promise<number> {
   const done = (label: string) => stages.push([label, Date.now() - mark]);
 
   const target = wanted[0] ?? resolveTarget(undefined, process.cwd());
-  const runtime = await resolveRuntimeWithProgress();
-  registerSelf(runtime);
-  done("runtime");
+  // code-server is fetched here, while tode still owns the tty: the narrated
+  // download must not interleave with a pane that has taken over the screen.
+  // Installed already (every open but the first), this is one existsSync.
   await ensureCodeServer(narrateFetch(`code-server ${CODE_SERVER_VERSION}`));
   const { palette } = await readPalette();
   ensureFont();
   installTheme(palette);
   installCss(palette);
   installSettings();
-  setLiveTheme(generateTheme(palette));
+  setLiveTheme(currentTheme(palette));
   done("profile");
   autoApplyShared();
 
@@ -280,7 +284,7 @@ async function openCommand(args: string[]): Promise<number> {
 
   void ensureServer().catch(() => {});
 
-  const pane = new Pane(runtime, { split, size, stages });
+  const pane = new Pane({ split, size, stages });
   await runOnboarding(pane, finalize, palette);
   if (pane.owned()) return pane.exited();
 
@@ -288,7 +292,7 @@ async function openCommand(args: string[]): Promise<number> {
   if (timing) {
     for (const [label, ms] of stages) process.stderr.write(`  ${label.padEnd(12)} ${ms}ms\n`);
   }
-  return launchBrowser(runtime, url, palette, { split, size, stages }).catch((error: Error) =>
+  return launchBrowser(url, palette, { split, size, stages }).catch((error: Error) =>
     fail(error.message),
   );
 }
@@ -392,7 +396,7 @@ async function themeCommand(file?: string): Promise<number> {
   process.stdout.write(`  ${palette.ansi.map((c) => swatch(hex(c))).join("")}  ansi 0-15\n`);
   for (const [name, color] of Object.entries(accent)) process.stdout.write(line(name, hex(color)));
   const { changed, fingerprint } = installTheme(palette);
-  setLiveTheme(generateTheme(palette));
+  setLiveTheme(currentTheme(palette));
   installBridge(todeCommand());
   installCss(palette);
   installSettings();
@@ -403,7 +407,7 @@ async function themeCommand(file?: string): Promise<number> {
   return 0;
 }
 
-type PageTiming = import("./browser/ctx").PageTiming;
+type PageTiming = import("./app/messages").PageTiming;
 
 const STAGES: [string, string][] = [
   ["renderer started", "code/didStartRenderer"],
@@ -452,18 +456,36 @@ function timingCommand(): number {
   return 0;
 }
 
-async function shutdownCommand(): Promise<number> {
-  const stopped = stopServer();
-  const runtime = await resolveRuntime().catch(() => null);
-  if (runtime) {
-    await new Promise<void>((resolve) => {
-      const child = spawn(runtime.bin, ["shutdown"], { stdio: "ignore" });
-      child.on("error", () => resolve());
-      child.on("exit", () => resolve());
-    });
-  }
-  process.stdout.write(stopped ? "tode stopped\n" : "nothing was running\n");
+async function transparencyCommand(on: boolean): Promise<number> {
+  const changed = setTransparency(on);
+  await Promise.all(
+    windowSockets().map((socket) =>
+      sendToExtension(socket, { files: [], folders: [], add: false, transparency: on }, 1500).catch(() => {}),
+    ),
+  );
+  const state = on ? "on" : "off";
+  process.stdout.write(
+    changed
+      ? `transparency ${state}, reload open windows to apply\n`
+      : `transparency already ${state}\n`,
+  );
   return 0;
+}
+
+async function shutdownCommand(): Promise<number> {
+  const windows = await shutdownDaemon();
+  const stopped = stopServer();
+  process.stdout.write(stopped || windows ? "tode stopped\n" : "nothing was running\n");
+  return 0;
+}
+
+function windowCommand(args: string[]): Promise<number> {
+  const flag = (name: string) => args.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
+  const url = args.find((arg) => !arg.startsWith("--"));
+  if (!url) fail("--window needs a url");
+  const pane = new Pane({ proxy: flag("--proxy"), partition: flag("--partition") });
+  pane.open(url);
+  return pane.exited();
 }
 
 async function upgradeCommand(args: string[]): Promise<number> {
@@ -529,9 +551,8 @@ async function sshCommand(target: string | undefined, args: string[]): Promise<n
   const unsupported = args.find((arg) => arg.startsWith("-"));
   if (unsupported) fail(`${unsupported} is not supported with --ssh yet`);
   if (args.length > 1) fail("--ssh opens one folder or file");
-  const runtime = await resolveRuntimeWithProgress();
   const { palette } = await readPalette();
-  return sshOpen(runtime, target, {
+  return sshOpen(target, {
     remotePath: args[0],
     palette,
     version: installedVersion(),
@@ -554,7 +575,7 @@ async function serveCommand(args: string[]): Promise<number> {
   installTheme(palette);
   installCss(palette);
   installSettings();
-  setLiveTheme(generateTheme(palette));
+  setLiveTheme(currentTheme(palette));
   autoApplyShared();
   if (prepare) return 0;
   installBridge(todeCommand());
@@ -591,12 +612,15 @@ async function main(): Promise<number> {
   }
   if (args[0] === "--import") return importCommand(args.slice(1));
   if (args[0] === "--theme") return themeCommand(args[1]);
+  if (args[0] === "--enable-transparency") return transparencyCommand(true);
+  if (args[0] === "--disable-transparency") return transparencyCommand(false);
   // alone it reads the last load's story; next to a path it stays the open
   // option that reports this open's stages
   if (args[0] === "--timing" && args.length === 1) return timingCommand();
   if (args[0] === "--skill") return skillCommand();
   if (args[0] === "--upgrade") return upgradeCommand(args.slice(1));
   if (args[0] === "--shutdown") return shutdownCommand();
+  if (args[0] === "--window") return windowCommand(args.slice(1));
   if (args[0] === "--uninstall") return uninstallCommand(args.slice(1));
   return openCommand(args);
 }
