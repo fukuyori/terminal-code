@@ -13,7 +13,7 @@ import { cachedPalette, currentTheme, installCss, installTheme, setLiveTheme, tr
 import type { TerminalPalette } from "../terminal/osc";
 import { MESSAGE_CHANNEL } from "./messages";
 import type { ThemeMessage, TimingMessage } from "./messages";
-import { browserProfileDir, daemonSocket, lines } from "./protocol";
+import { browserProfileDir, buildStamp, daemonPidFile, daemonSocket, lines } from "./protocol";
 import type { OpenRequest, Reply, Request } from "./protocol";
 
 fs.mkdirSync(browserProfileDir(), { recursive: true });
@@ -22,6 +22,7 @@ app.setPath("sessionData", browserProfileDir());
 
 const IDLE_EXIT_MS = 15_000;
 const SOCKET = daemonSocket();
+const BUILD = buildStamp(__filename);
 
 interface Window {
   view: WebViewHandle | null;
@@ -141,6 +142,14 @@ function openWindow(request: OpenRequest, onClosed: (code: number) => void): Roo
 function serve() {
   fs.mkdirSync(path.dirname(SOCKET), { recursive: true });
   fs.rmSync(SOCKET, { force: true });
+  try {
+    fs.writeFileSync(daemonPidFile(), String(process.pid));
+    process.on("exit", () => {
+      try {
+        fs.rmSync(daemonPidFile(), { force: true });
+      } catch {}
+    });
+  } catch {}
   const server = net.createServer((connection) => {
     let root: Root | null = null;
     const reply = (value: Reply) => {
@@ -155,6 +164,12 @@ function serve() {
         switch (request.cmd) {
           case "open":
             if (root) return;
+          
+            if (request.build && request.build !== BUILD && windows.size === 0) {
+              reply({ ok: false, error: "stale" });
+              connection.end(() => setTimeout(() => app.exit(0), 50));
+              return;
+            }
             if (idle) clearTimeout(idle);
             try {
               root = openWindow(request, (code) => {
@@ -175,8 +190,14 @@ function serve() {
             root?.stop();
             return;
           case "shutdown":
+            reply({ ok: true, pid: process.pid, windows: windows.size });
+            connection.end();
             for (const open of windows.keys()) open.stop();
             setTimeout(() => app.exit(0), 100);
+            return;
+          case "status":
+            reply({ ok: true, pid: process.pid, windows: windows.size });
+            connection.end();
             return;
           case "transparency":
             applyTransparency(request.on);

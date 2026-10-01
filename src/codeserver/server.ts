@@ -3,6 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
+import { kill } from "../app/control";
 import { DATA_DIR, LOGS_DIR, STATE_DIR } from "../runtime/paths";
 import { CODE_SERVER_VERSION, ensureCodeServer, installedCodeServer, narrateFetch } from "./vendored";
 
@@ -249,18 +250,13 @@ async function warmUp(port: number): Promise<void> {
   } catch {}
 }
 
-export function stopServer(): boolean {
+export async function stopServer(): Promise<boolean> {
   const state = readState();
   if (!state) return false;
-  let stopped = false;
-  for (const pid of [state.injectorPid, state.pid]) {
-    if (pid && running(pid)) {
-      process.kill(pid, "SIGTERM");
-      stopped = true;
-    }
-  }
+  const pids = [state.injectorPid, state.pid].filter((pid): pid is number => Boolean(pid) && running(pid));
+  await Promise.all(pids.map(kill));
   fs.rmSync(STATE_FILE, { force: true });
-  return stopped;
+  return pids.length > 0;
 }
 
 export function origin(state: ServerState): string {

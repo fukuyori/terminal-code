@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 
 import {
   CSS_FILE,
@@ -33,7 +34,9 @@ import {
   installTheme,
   readPalette,
 } from "./profile";
-import { Pane, launchBrowser, registerSelf, shutdownDaemon } from "./launch";
+import { shutdownDaemons } from "./app/control";
+import type { Windows } from "./app/control";
+import { Pane, launchBrowser, registerSelf } from "./launch";
 import { INSTALL_ROOT } from "./runtime/paths";
 import { skillCommand } from "./skill";
 import { sshForward, sshOpen } from "./ssh";
@@ -473,9 +476,16 @@ async function transparencyCommand(on: boolean): Promise<number> {
 }
 
 async function shutdownCommand(): Promise<number> {
-  const windows = await shutdownDaemon();
-  const stopped = stopServer();
-  process.stdout.write(stopped || windows ? "tode stopped\n" : "nothing was running\n");
+  const stopped = await shutdownDaemons();
+  const server = await stopServer();
+  if (!server && stopped.daemons === 0) {
+    process.stdout.write("nothing was running\n");
+    return 0;
+  }
+  const notes: string[] = [];
+  if (stopped.windows > 0) notes.push(`closed ${stopped.windows} window${stopped.windows === 1 ? "" : "s"}`);
+  if (stopped.killed > 0) notes.push(`killed ${stopped.killed} that did not answer`);
+  process.stdout.write(`tode stopped${notes.length > 0 ? `, ${notes.join(", ")}` : ""}\n`);
   return 0;
 }
 
@@ -496,6 +506,7 @@ async function upgradeCommand(args: string[]): Promise<number> {
   const outcome = await upgrade({
     check,
     version,
+    confirm: confirmUpgrade,
     onStage: (stage, fraction) => {
       if (stage !== "downloading") return;
       if (!announced) {
@@ -519,12 +530,30 @@ async function upgradeCommand(args: string[]): Promise<number> {
     case "available":
       process.stdout.write(`tode ${outcome.build.version} is available (you have ${outcome.from})\n`);
       return 0;
+    case "cancelled":
+      process.stdout.write("cancelled\n");
+      return 0;
     case "upgraded": {
-      stopServer();
       process.stdout.write(`tode ${outcome.from} -> ${outcome.build.version}\n`);
       return 0;
     }
   }
+}
+
+async function confirmUpgrade(build: { version: string }, windows: Windows): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return true;
+  const open =
+    windows.count > 0
+      ? `${windows.count} open tode window${windows.count === 1 ? "" : "s"}`
+      : "any open tode windows";
+  process.stdout.write(`upgrading to ${build.version} closes ${open}\n`);
+  const ask = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolve) => {
+    ask.question("continue? [Y/n] ", resolve);
+    ask.on("close", () => resolve("n"));
+  });
+  ask.close();
+  return /^(y|yes|)$/i.test(answer.trim());
 }
 
 function installedVersion(): string {

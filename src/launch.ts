@@ -7,8 +7,9 @@ import path from "node:path";
 import { callerTty, canSplit, cannotOpenPanes, checkTerminal, detect, findOwner, unsupportedGraphicsMessage } from "@zenbu-labs/pixel/terminal";
 import type { Direction } from "@zenbu-labs/pixel/terminal";
 
-import { DAEMON_DIR, daemonSocket, lines } from "./app/protocol";
-import type { Reply, Request } from "./app/protocol";
+import { ask, connectDaemon, linesOf, sleep } from "./app/control";
+import { DAEMON_DIR, buildStamp, daemonSocket } from "./app/protocol";
+import type { OpenRequest, Reply, Request } from "./app/protocol";
 import { CSS_FILE } from "./codeserver/server";
 import { bootstrapEntry, daemonEntry, electronBinary } from "./runtime/launcher";
 import type { TerminalPalette } from "./terminal/osc";
@@ -59,36 +60,51 @@ function windowTty(): string | null {
   return process.env.PIXEL_TTY ?? callerTty().path;
 }
 
-function connectDaemon(): Promise<net.Socket> {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect(daemonSocket());
-    socket.once("connect", () => resolve(socket));
-    socket.once("error", reject);
-  });
-}
+const OPEN_TIMEOUT_MS = 20_000;
 
 async function daemonConnection(): Promise<net.Socket> {
   try {
-    return await connectDaemon();
+    return await connectDaemon(daemonSocket());
   } catch {}
   spawnDaemon();
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + OPEN_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
-      return await connectDaemon();
+      return await connectDaemon(daemonSocket());
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await sleep(100);
     }
   }
   throw new Error("the tode window process did not start");
 }
 
-export async function shutdownDaemon(): Promise<boolean> {
-  const socket = await connectDaemon().catch(() => null);
-  if (!socket) return false;
-  socket.write(`${JSON.stringify({ cmd: "shutdown" } satisfies Request)}\n`);
-  socket.end();
-  return true;
+function stale(reply: Reply): boolean {
+  return "ok" in reply && !reply.ok && reply.error === "stale";
+}
+
+async function daemonGone(within: number): Promise<void> {
+  const deadline = Date.now() + within;
+  while (Date.now() < deadline) {
+    try {
+      (await connectDaemon(daemonSocket())).destroy();
+    } catch {
+      return;
+    }
+    await sleep(100);
+  }
+}
+
+async function openSession(request: OpenRequest): Promise<{ socket: net.Socket; reply: Reply }> {
+  const build = buildStamp(daemonEntry());
+  let socket = await daemonConnection();
+  let reply = await ask(socket, { ...request, build }, OPEN_TIMEOUT_MS);
+  if (stale(reply)) {
+    socket.destroy();
+    await daemonGone(5000);
+    socket = await daemonConnection();
+    reply = await ask(socket, { ...request, build }, OPEN_TIMEOUT_MS);
+  }
+  return { socket, reply };
 }
 
 function attachWindow(url: string, options: LaunchOptions): { exited: Promise<number>; close(): void } {
@@ -107,38 +123,41 @@ function attachWindow(url: string, options: LaunchOptions): { exited: Promise<nu
         return 1;
       }
     }
-    const socket = await daemonConnection();
+    let session: { socket: net.Socket; reply: Reply };
+    try {
+      session = await openSession({
+        cmd: "open",
+        tty,
+        url,
+        env: process.env,
+        proxy: options.proxy,
+        partition: options.partition,
+        timingFile: `${CSS_FILE}.timing.json`,
+      });
+    } catch (error) {
+      process.stderr.write(`could not open the tode window: ${(error as Error).message}\n`);
+      return 1;
+    }
+    const { socket, reply } = session;
     send = (request: Request) => {
       try {
         socket.write(`${JSON.stringify(request)}\n`);
       } catch {}
     };
+    if ("ok" in reply && !reply.ok) {
+      process.stderr.write(`could not open the tode window: ${reply.error}\n`);
+      socket.destroy();
+      return 1;
+    }
     if (closeRequested) {
+      send({ cmd: "close" });
       socket.end();
       return 0;
     }
-    send({
-      cmd: "open",
-      tty,
-      url,
-      env: process.env,
-      proxy: options.proxy,
-      partition: options.partition,
-      timingFile: `${CSS_FILE}.timing.json`,
-    });
     return new Promise<number>((resolve) => {
-      socket.on(
-        "data",
-        lines((line) => {
-          const reply = JSON.parse(line) as Reply;
-          if ("ok" in reply && !reply.ok) {
-            process.stderr.write(`could not open the tode window: ${reply.error}\n`);
-            resolve(1);
-          } else if ("event" in reply && reply.event === "closed") {
-            resolve(reply.code);
-          }
-        }),
-      );
+      linesOf(socket).on("line", (event: Reply) => {
+        if ("event" in event && event.event === "closed") resolve(event.code);
+      });
       socket.on("close", () => resolve(0));
       socket.on("error", () => resolve(1));
       process.on("SIGWINCH", () => send({ cmd: "resize" }));

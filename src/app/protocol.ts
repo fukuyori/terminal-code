@@ -18,6 +18,18 @@ export function daemonSocket(): string {
   return path.join(DAEMON_DIR, `${installVersion()}.sock`);
 }
 
+export function daemonPidFile(): string {
+  return path.join(DAEMON_DIR, `${installVersion()}.pid`);
+}
+
+export function buildStamp(entry: string): string {
+  try {
+    return String(Math.floor(fs.statSync(entry).mtimeMs));
+  } catch {
+    return "unknown";
+  }
+}
+
 export function browserProfileDir(): string {
   const key = crypto.createHash("sha1").update(INSTALL_ROOT).digest("hex").slice(0, 8);
   return path.join(DATA_DIR, "browser", key);
@@ -31,6 +43,7 @@ export interface OpenRequest {
   proxy?: string;
   partition?: string;
   timingFile?: string;
+  build?: string;
 }
 
 export type Request =
@@ -38,9 +51,13 @@ export type Request =
   | { cmd: "resize" }
   | { cmd: "close" }
   | { cmd: "shutdown" }
+  | { cmd: "status" }
   | { cmd: "transparency"; on: boolean };
 
-export type Reply = { ok: true; pid: number } | { ok: false; error: string } | { event: "closed"; code: number };
+export type Reply =
+  | { ok: true; pid: number; windows?: number }
+  | { ok: false; error: string }
+  | { event: "closed"; code: number };
 
 export function lines(onLine: (line: string) => void): (chunk: Buffer | string) => void {
   let buffer = "";

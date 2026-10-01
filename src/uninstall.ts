@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
+import { shutdownDaemons } from "./app/control";
 import { stopServer } from "./codeserver/server";
 import { FONT_ASSET, assetPath, userFontsDir } from "./profile";
 import {
@@ -86,7 +87,8 @@ export async function uninstallCommand(args: string[]): Promise<number> {
 
   const stop = spinner("uninstalling");
 
-  stopServer();
+  await shutdownDaemons();
+  await stopServer();
 
   if (removeFreed(ghosttyConfigDir())) reloadGhostty();
 
