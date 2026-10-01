@@ -282,6 +282,8 @@ export function generateTheme(palette: TerminalPalette, options: ThemeOptions = 
     // special case da sticky headers
     "editorStickyScroll.background": clear ? withAlpha(bg, 0.85) : hex(s.editor),
     "editorStickyScrollHover.background": clear ? withAlpha(fg, 0.1) : hex(s.hover),
+    "sideBarStickyScroll.background": clear ? withAlpha(bg, 0.85) : hex(s.sunken),
+    "panelStickyScroll.background": clear ? withAlpha(bg, 0.85) : hex(s.editor),
   };
 
   const ANSI_NAMES = [
