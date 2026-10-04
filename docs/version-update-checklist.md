@@ -18,6 +18,14 @@ revision, for example `0.4.2-win.1`.
       runtime dependency, including all CLI features used by the new release.
 - [ ] Before publishing, verify that the matching Windows runtime installer is
       available to users or deliberately included in the release.
+- [ ] Actions: this fork's workflows only build and test, and nothing is
+      released from CI (`windows.yml` runs on `windows-native`, `posix-build.yml`
+      by hand, both with read-only permissions). Upstream's `release.yml`, which
+      deploys to Cloudflare, publishes to R2 and creates GitHub releases, is
+      deleted here: the merge reports it as a modify/delete conflict, so keep it
+      deleted and copy any change to its build steps into `posix-build.yml` by
+      hand. Releases are made by the maintainer with `build-release.ps1 -Sign`,
+      `build-installer.ps1 -Sign` and `publish-windows.ps1`.
 - [ ] Sync pixel. Compare the `@zenbu-labs/pixel` version in the merged
       `package.json` with the copy in `pixel/` (`docs/pixel-origin.md` records
       its source commit and version label). If upstream moved to a newer

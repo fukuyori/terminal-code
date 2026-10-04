@@ -1,0 +1,48 @@
+name: posix build
+
+# upstream's macOS and Linux builds, kept for running by hand. They build and test
+# only: nothing is tagged, released, deployed or uploaded anywhere but as a workflow
+# artifact. The Windows build is windows.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: scripts/release.sh "dev-${GITHUB_SHA::7}" dev "${{ matrix.target }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target }}
+          path: |
+            dist-release/tode-${{ matrix.target }}.tar.gz
+            dist-release/manifest-${{ matrix.target }}.json
+          if-no-files-found: error
