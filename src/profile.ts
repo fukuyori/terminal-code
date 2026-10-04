@@ -5,19 +5,15 @@ import path from "node:path";
 
 import { CSS_FILE, USER_DATA_DIR, WEB_CONFIG_FILE } from "./codeserver/server";
 import { FONT_FALLBACKS, injectedCss } from "./codeserver/inject";
-import { parseJsonc, readKey, setKeys } from "./jsonc";
+import { parseJsonc, readKey, setKey, setKeys } from "./jsonc";
 import { DATA_DIR, WINDOWS } from "./runtime/paths";
 import { uriPath } from "./runtime/platform";
 import { QUIT_CHORDS, QUIT_COMMAND, claimBindings, fallbackBindings, hintBindings, loadDecisions, overrideBindings, quitBindings, quitWhen, rememberQuitChord, decisionsStamp } from "./shortcuts/store";
 import { queryTerminal, withFallbacks } from "./terminal/osc";
 import type { ParsedReplies, TerminalPalette } from "./terminal/osc";
 import { hex } from "./theme/color";
-import {
-  THEME_NAME,
-  generateTheme,
-  paletteFingerprint,
-  themeFingerprint,
-} from "./theme/generate";
+import { THEME_NAME, generateTheme, paletteFingerprint, themeFingerprint } from "./theme/generate";
+import type { GeneratedTheme } from "./theme/generate";
 
 export const VSCODE_DIR = path.join(DATA_DIR, "vscode");
 export const USER_DIR = path.join(USER_DATA_DIR, "User");
@@ -193,8 +189,36 @@ export interface ThemeDocument {
   semanticHighlighting?: boolean;
 }
 
-export function installTheme(palette: TerminalPalette): { changed: boolean; fingerprint: string } {
-  return installThemeJson(generateTheme(palette), paletteFingerprint(palette));
+export const TRANSPARENCY_SETTING = "tode.transparent";
+export const SETTINGS_FILE = path.join(USER_DIR, "settings.json");
+
+function readSettings(): string {
+  try {
+    return fs.readFileSync(SETTINGS_FILE, "utf8") || "{}";
+  } catch {
+    return "{}";
+  }
+}
+
+export function transparencyEnabled(): boolean {
+  return readKey(readSettings(), TRANSPARENCY_SETTING) === true;
+}
+
+export function setTransparency(on: boolean): boolean {
+  fs.mkdirSync(USER_DIR, { recursive: true });
+  return writeIfChanged(SETTINGS_FILE, setKey(readSettings(), TRANSPARENCY_SETTING, on));
+}
+
+export function currentTheme(palette: TerminalPalette, transparent = transparencyEnabled()): GeneratedTheme {
+  return generateTheme(palette, { transparent });
+}
+
+export function installTheme(
+  palette: TerminalPalette,
+  transparent = transparencyEnabled(),
+): { changed: boolean; fingerprint: string } {
+  const fingerprint = `${paletteFingerprint(palette)}${transparent ? "-clear" : ""}`;
+  return installThemeJson(generateTheme(palette, { transparent }), fingerprint);
 }
 
 export function installThemeJson(
@@ -335,8 +359,12 @@ export const SEEDED_SETTINGS: Record<string, unknown> = {
   "scm.defaultViewMode": "tree",
 };
 
-export function installCss(palette: TerminalPalette, background?: string): boolean {
-  return writeIfChanged(CSS_FILE, injectedCss(background ?? hex(palette.background), FONT_FAMILY));
+export function installCss(
+  palette: TerminalPalette,
+  background?: string,
+  transparent = transparencyEnabled(),
+): boolean {
+  return writeIfChanged(CSS_FILE, injectedCss(background ?? hex(palette.background), FONT_FAMILY, transparent));
 }
 
 export function setLiveTheme(theme: ThemeDocument): boolean {
@@ -394,7 +422,10 @@ export function setThemeFile(file: string): string | null {
 /** What the editor should be wearing right now: the chosen file if there is one
  * and it still reads, and the terminal's own colours otherwise. A file that has
  * gone away is not an error — the terminal is always there to fall back on. */
-export function installActiveTheme(palette: TerminalPalette): ThemeDocument {
+export function installActiveTheme(
+  palette: TerminalPalette,
+  transparent = transparencyEnabled(),
+): ThemeDocument {
   const chosen = readThemeChoice();
   if (chosen) {
     const theme = readThemeDocument(chosen);
@@ -404,8 +435,8 @@ export function installActiveTheme(palette: TerminalPalette): ThemeDocument {
       return theme;
     }
   }
-  const theme = generateTheme(palette);
-  installThemeJson(theme, paletteFingerprint(palette));
+  const theme = generateTheme(palette, { transparent });
+  installThemeJson(theme, `${paletteFingerprint(palette)}${transparent ? "-clear" : ""}`);
   setLiveTheme(theme);
   return theme;
 }

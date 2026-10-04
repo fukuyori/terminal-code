@@ -12,4 +12,8 @@ export interface BridgeCtx {
   /** the record of the color theme this workbench should wear — enforced by
    * the bridge, updated when a theme is picked in the editor */
   colorThemeFile: string;
+  /** where the window processes list themselves: a socket file each, or on
+   * Windows a file naming the pipe */
+  daemonDir: string;
+  transparencySetting: string;
 }

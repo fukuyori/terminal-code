@@ -15,6 +15,26 @@
 
 pixel の不足が見つかった場合は、`fukuyori/terminal-browser` に issue を出す(§4 Phase 3)。
 
+## 進捗(2026-10-04)
+
+作業ブランチ `merge/upstream-v0.4.2`(`git merge main --no-commit`、未コミット)。
+
+| 項目 | 状態 |
+|---|---|
+| 競合 24 件の解消 | 完了 |
+| `npx tsc --noEmit` | 通過(pixel の `electron.d.ts` は postinstall を走らせていないため `node_modules` に手で補っている) |
+| `npm run build` / 全テスト | 通過(140 件) |
+| Windows 版 daemon(案 A: 1 ウィンドウ 1 プロセス) | 実装済み(`app/protocol.ts` の named pipe、`daemon.ts`、`control.ts`、`launch.ts`) |
+| テーマ選択の保護(`THEME_CHOICE_FILE`)の移植 | 実装済み(`daemon.ts` の `broadcastTheme`、`applyTransparency`) |
+| pixel の同梱(`stage-windows.ps1`) | 実装済み。`npm ci --omit=dev --ignore-scripts` の後に `node_modules\@zenbu-labs\pixel` を terminal-browser の Windows ビルドに差し替え、`pixel-native-win32-x64` を追加し、`PIXEL`(出所とハッシュ)を記録。`bin\tode.cmd` は同梱の `pixel.exe` を Node として起動する |
+| ビルドスクリプト | `build-windows.ps1` / `release-windows.ps1` / `dist-windows.ps1` に `-TerminalBrowser`(または環境変数 `TODE_TERMINAL_BROWSER`)を追加。`dist-windows.ps1` の terminal-browser 検査と `-VendorBrowser` は削除 |
+| 署名(Phase 4.5) | `sign-windows.ps1 -Payload` を追加(payload の exe / dll / node)。`release-windows.ps1 -Sign` が zip の前に署名し、`installer-windows.ps1 -Sign` は未署名の payload があれば失敗する。`tode.iss` の terminal-browser 検査は削除 |
+| ステージの検証 | `build-windows.ps1` で `out\windows-release\tode` を作成し、`tode --help` が同梱 `pixel.exe` で動くことを確認。ウィンドウ用プロセスを隔離環境で単体起動し、pipe と pid の作成、`status` の応答、`shutdown` での終了とファイル削除を確認 |
+| 実機での起動確認(Phase 3、自動操作による部分) | 完了。隔離環境で WezTerm を別プロセスで起動し、ウィンドウ用プロセスの起動と描画、初回画面(インポート、ショートカット)、VSCodium ワークベンチの読み込み、ブリッジ拡張の登録、`--enable-transparency` / `--disable-transparency`、`--quit`、`--shutdown` を確認(DevTools ポート経由)。**画面の見た目、入力、IME、テーマ色、透過の見た目は未確認(目視が必要)** |
+| 判明して直した問題 | (1) `AttachConsole(pid)` は pid がコンソールを持たないと失敗する(`os error 6`)。`pixel.exe` は GUI サブシステムで、Node として動かしてもコンソールが無いため、CLI は同梱の `runtime\node.exe`(コンソール型)で動かす。(2) サーバー停止でプロセスが残る(VSCodium の子プロセス)。Windows の `kill` を `taskkill /T /F` に変更 |
+| 既知の制限(対応しない) | IME の変換候補が、ページのキャレットではなく端末カーソルの位置に出る(VSCodium では位置が動く)。terminal-browser の issue #3 に記録し、Ghostty 側で扱うことになった。tode のマージの完了条件には含めない |
+| README / CHANGELOG / 版番号 | **未実施** |
+
 ## 1. 現状(調査結果)
 
 | 項目 | 内容 |
@@ -146,6 +166,18 @@ windows-native はこれらを**変更して使っている**ため、modify/del
 | 文書 | `README.md`, `README.ja.md`, `CHANGELOG*.md` | upstream の追記(+2 行)を反映し、日英両方を更新 |
 
 ### Phase 2: 動作できる状態にする
+- [ ] **Windows 用 daemon の設計(判断待ち)**: pixel は 1 プロセスにつき 1 コンソールにしか接続できない(`attachWindowsConsole`)。
+      upstream の daemon は 1 プロセスで複数ウィンドウを持つため、Windows ではそのままでは成立しない。
+      案 A: ウィンドウごとにプロセスを起動する(tode 側のみ、推奨)/ 案 B: pixel 側で複数コンソール対応(terminal-browser に issue)。
+- [ ] `src/app/protocol.ts` / `daemon.ts` / `launch.ts`: daemon の接続先を named pipe にする(`.sock` は Windows で listen できない)。
+- [ ] `src/app/control.ts`: `ps -axo` と `SIGTERM`/`SIGKILL` に依存している。Windows ではプロセス一覧(コマンドライン付き)の取得と
+      停止方法を置き換える。取得に失敗したときに PID ファイルだけ消してプロセスを残さないこと(upgrade / uninstall が使う)。
+- [ ] `src/app/daemon.ts`: 旧 `browser/mainscript.ts` にあった `THEME_CHOICE_FILE` の保護を移植する。
+      `--theme <file>` を選んでいる間は、端末色の通知(`broadcastTheme`)と透過切り替え(`applyTransparency` の `installTheme`)が
+      選択を上書きしないこと。あわせて端末色通知の宛先は `.sock` 固定をやめ、`listEndpoints` と
+      `ECONNREFUSED`/`ENOENT`/`EPIPE` での掃除にする。
+- [ ] 旧 `test/browserglue.test.js` が検証していた内容(端末色の通知がテーマになって各ウィンドウに届くこと)を、
+      新構成のテストとして書き直す。
 - [ ] `launcher.ts` の Windows 対応(`pixel.exe`)と、起動 `.cmd` の作成。upstream の shim(`dist.sh`)は
       `ELECTRON_RUN_AS_NODE=1` を設定して `pixel` で `dist/main.js` を実行する。Windows の `.cmd` でも同等の設定と、
       実際の起動経路(`pixel.exe` を Node として起動できること)を実機で確認する。

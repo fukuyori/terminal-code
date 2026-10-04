@@ -2,15 +2,6 @@ import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
 
-/** code-server in front of a proxy that puts tode's css into the workbench page.
- *
- * The page needs the css before its first paint, and reaching in over the
- * devtools protocol after the fact means a visible flash, so the html is edited
- * on its way through instead. Everything that is not the document is piped
- * straight across. Nothing but css goes in: the workbench's startup timing
- * lives in the browser preload (src/browser/preload.ts), and links that leave
- * the workbench open as terminal-browser's own popups over the pane
- * (--open-tabs-in-popup-stack). */
 export const FONT_ROUTE = "/__tode/font.ttf";
 
 /** The workbench's own settings, handed to it in the document.
@@ -266,14 +257,36 @@ export function createInjector(
 
 export const FONT_FALLBACKS = `Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace`;
 
-export function injectedCss(background: string, fontFamily: string): string {
+const CLEARED_SURFACES = [
+  "html",
+  "body",
+  ".monaco-workbench",
+  ".monaco-workbench .part",
+  ".monaco-workbench .part>.content",
+  ".monaco-workbench .part>.title",
+  ".monaco-workbench.floating-panels>.monaco-grid-view",
+  ".monaco-workbench.floating-panels .part",
+  ".monaco-workbench.style-override .monaco-pane-view .pane",
+  ".monaco-workbench.style-override .monaco-pane-view .pane>.pane-header",
+  ".editor-group-container>.tabs",
+  ".monaco-editor-background",
+  ".monaco-editor .margin",
+  ".monaco-list .monaco-list-rows",
+  ".terminal-outer-container",
+  ".xterm-viewport",
+  ".xterm-rows",
+];
+
+export function injectedCss(background: string, fontFamily: string, transparent = false): string {
   const stack = `"${fontFamily}", ${FONT_FALLBACKS}`;
+  const fill = transparent ? "transparent" : background;
   return [
     `@font-face{font-family:"${fontFamily}";src:url("${FONT_ROUTE}") format("truetype");font-weight:100 900;font-display:block;}`,
-    `html,body{background:${background} !important;}`,
+    `html,body{background:${fill} !important;}`,
     "html{overflow:hidden;}",
     "body{margin:0;}",
-    `.monaco-workbench{background:${background};font-family:${stack} !important;}`,
+    `.monaco-workbench{background:${fill};font-family:${stack} !important;}`,
+    transparent ? `${CLEARED_SURFACES.join(",")}{background:transparent !important;}` : "",
     `.monaco-workbench .part,.monaco-workbench .monaco-list,.monaco-workbench .monaco-inputbox,`,
     `.monaco-workbench input,.monaco-workbench select,.monaco-workbench textarea,`,
     `.monaco-menu,.quick-input-widget,.monaco-hover,.notifications-toasts`,

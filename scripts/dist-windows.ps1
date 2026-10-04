@@ -8,17 +8,15 @@
     install root is the same rename dance as posix, so a failure leaves the
     working install exactly as it was.
 
-    terminal-browser is not copied in by default. Its Windows build installs
-    itself under %LOCALAPPDATA%\Programs\terminal-browser and updates itself
-    there, and tode resolves that install directly — copying a few hundred
-    megabytes of Electron on every dev install would buy nothing. Pass
-    -VendorBrowser to stage a private copy anyway.
+    The install carries its own pixel, taken from the terminal-browser checkout
+    named by -TerminalBrowser or TODE_TERMINAL_BROWSER (see stage-windows.ps1),
+    so nothing else has to be installed beside it.
 #>
 [CmdletBinding()]
 param(
     [string]$Version,
     [string]$Channel = "windows",
-    [switch]$VendorBrowser,
+    [string]$TerminalBrowser = "",
     [switch]$SkipPath
 )
 
@@ -53,21 +51,7 @@ Invoke-TodeBuild $root
 
 Write-Output "==> staging $Version"
 $stage = "$app.new"
-New-TodeStage $root $stage $Version $Channel
-
-$browserRoot = Join-Path $env:LOCALAPPDATA "Programs\terminal-browser"
-if (-not (Test-Path -LiteralPath (Join-Path $browserRoot "cli\dist\main.js"))) {
-    Write-Warning "terminal-browser is not installed at $browserRoot"
-    Write-Warning "  install it from https://github.com/fukuyori/terminal-browser/releases before running tode"
-}
-
-if ($VendorBrowser) {
-    if (-not (Test-Path -LiteralPath $browserRoot)) { throw "nothing to vendor: $browserRoot is not there" }
-    Write-Output "==> vendoring terminal-browser"
-    $vendor = Join-Path $stage "vendor"
-    New-Item -ItemType Directory -Path $vendor -Force | Out-Null
-    Copy-Item -LiteralPath $browserRoot -Destination (Join-Path $vendor "terminal-browser") -Recurse
-}
+New-TodeStage $root $stage $Version $Channel $TerminalBrowser
 
 Write-Output "==> installing to $app"
 $previous = "$app.old"

@@ -12,7 +12,7 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "tode-upgrade-test-"));
 process.env.TODE_INSTALL_ROOT = path.join(scratch, "install");
 process.env.XDG_STATE_HOME = path.join(scratch, "state");
 
-const { targetTriple } = require("../dist/runtime/release.js");
+const { targetTriple } = require("../dist/runtime/fetch.js");
 
 function tarBinary() {
   if (process.platform !== "win32") return "tar";

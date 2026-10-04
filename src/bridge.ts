@@ -5,9 +5,10 @@ import type { BridgeCtx } from "./bridge/ctx";
 import { bridgeMain } from "./bridge/extension";
 import type { OpenRequest } from "./ipc";
 import { DATA_DIR, IPC_DIR } from "./runtime/paths";
+import { DAEMON_DIR } from "./app/protocol";
 import { THEME_NAME } from "./theme/generate";
 import { uriPath } from "./runtime/platform";
-import { EXTENSIONS_DIR, LIVE_THEME_FILE } from "./profile";
+import { EXTENSIONS_DIR, LIVE_THEME_FILE, TRANSPARENCY_SETTING } from "./profile";
 import {
   IMPORT_DECISION_ID,
   QUIT_CHORD,
@@ -21,7 +22,7 @@ import {
 } from "./shortcuts/store";
 
 const BRIDGE_ID = "tode.tode-bridge";
-const BRIDGE_VERSION = "1.6.1";
+const BRIDGE_VERSION = "1.7.0";
 
 export const STARTUP_OPEN_FILE = path.join(DATA_DIR, "startup-open.json");
 
@@ -42,15 +43,7 @@ export function requestColorTheme(name: string): void {
 }
 export const BRIDGE_DIR = path.join(EXTENSIONS_DIR, `${BRIDGE_ID}-${BRIDGE_VERSION}`);
 
-/**
- *
- * i need to map out the code this is basically gonna be a giant code review session
- *
- * the obvious question is where is the entrypoint of the program
- * so i can start traversing it
- *
- *
- */
+
 function manifest(): unknown {
   const quitBindings = QUIT_CHORDS.map((key) => ({
     command: QUIT_COMMAND,
@@ -68,9 +61,6 @@ function manifest(): unknown {
     version: BRIDGE_VERSION,
     engines: { vscode: "^1.80.0" },
     main: "./extension.js",
-    // "*" on purpose: onStartupFinished is deferred until the workbench has
-    // idled, which makes tode --review flip the view seconds late. The bridge
-    // is a few file reads and a socket, cheap enough to run during startup.
     activationEvents: ["*"],
     contributes: {
       // registerCommand alone makes a command exist — a keybinding can run it
@@ -78,13 +68,33 @@ function manifest(): unknown {
       // command palette, so only the one deliberate action is declared:
       // confirmQuit (the ctrl+c reflex) and quitHint (the redirect toast) are
       // keybinding targets, and a palette full of quit flavours reads as noise
-      commands: [{ command: "tode.quit", title: "Quit", category: "terminal-code" }],
+      commands: [
+        { command: "tode.quit", title: "Quit", category: "terminal-code" },
+        { command: "tode.enableTransparency", title: "Enable Transparency", category: "terminal-code" },
+        { command: "tode.disableTransparency", title: "Disable Transparency", category: "terminal-code" },
+      ],
+      menus: {
+        commandPalette: [
+          { command: "tode.enableTransparency", when: "!tode.transparent" },
+          { command: "tode.disableTransparency", when: "tode.transparent" },
+        ],
+      },
+      configuration: {
+        title: "terminal-code",
+        properties: {
+          [TRANSPARENCY_SETTING]: {
+            type: "boolean",
+            default: false,
+            description:
+              "Make the editor transparent. Takes effect when the window is reloaded.",
+          },
+        },
+      },
       keybindings: [...quitBindings, ...hintBinding],
     },
   };
 }
 
-// hm this is complicated, i dont think the decision choice case makes sense
 export function quitHintMessage(): string {
   const choices = loadDecisions()?.choices ?? {};
   const decision = choices[IMPORT_DECISION_ID] ?? choices[QUIT_CHORD];
@@ -127,6 +137,8 @@ export function installBridge(tode: string[]): boolean {
       quitHint: quitHintMessage(),
       startupOpenFile: STARTUP_OPEN_FILE,
       colorThemeFile: COLOR_THEME_FILE,
+      daemonDir: DAEMON_DIR,
+      transparencySetting: TRANSPARENCY_SETTING,
     }),
   );
   registerBridge();

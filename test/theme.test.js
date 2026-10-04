@@ -638,7 +638,7 @@ test("a quit request reaches the window and the bridge acts on it", async () => 
       if (id !== "vscode") return require(id);
       return {
         Uri: { parse: (target) => ({ toString: () => target }) },
-        commands: { registerCommand: () => ({ dispose() {} }) },
+        commands: { registerCommand: () => ({ dispose() {} }), executeCommand: () => {} },
         env: {
           openExternal: (uri) => {
             opened.push(uri.toString());
@@ -722,7 +722,7 @@ test("the colour theme is the user's to change, and tode takes its colours back 
         return {
           ConfigurationTarget: { Global: 1 },
           Uri: { parse: (t) => ({ toString: () => t }) },
-          commands: { registerCommand: () => ({ dispose() {} }) },
+          commands: { registerCommand: () => ({ dispose() {} }), executeCommand: () => {} },
           env: { openExternal: () => Promise.resolve(true) },
           window: { showErrorMessage: () => Promise.resolve() },
           workspace: {
@@ -817,7 +817,7 @@ test("a color theme chosen by name reaches the workbench, at startup and over th
       return {
         ConfigurationTarget: { Global: 1 },
         Uri: { parse: (t) => ({ toString: () => t }) },
-        commands: { registerCommand: () => ({ dispose() {} }) },
+        commands: { registerCommand: () => ({ dispose() {} }), executeCommand: () => {} },
         env: { openExternal: () => Promise.resolve(true) },
         window: {
           showErrorMessage: (message) => {

@@ -8,22 +8,21 @@ https://github.com/user-attachments/assets/4ba0d434-896a-4ab3-9c91-5d351dacee08
 
 This fork of [zenbu-labs/terminal-code](https://github.com/zenbu-labs/terminal-code)
 adds a Windows x64 build that needs no WSL. It is tested in PowerShell 7 inside
-[WezTerm](https://wezterm.org), next to the Windows build of
-[terminal-browser](https://github.com/fukuyori/terminal-browser), which is what
-draws the editor into the pane. Windows support is experimental; the
-[Windows](#windows) section below has the details and what is not there yet.
+[WezTerm](https://wezterm.org) and Ghostty. The pane is drawn by
+[pixel](https://github.com/zenbu-labs/pixel), the engine terminal-browser is
+built on, and the install carries it, so nothing else has to be installed
+beside it. Windows support is experimental; the [Windows](#windows) section
+below has the details and what is not there yet.
 
 ### Install on Windows
 
-1. Install [terminal-browser for Windows](https://github.com/fukuyori/terminal-browser/releases)
-   `0.8.0-win.1` — or another `0.8.0-win.*` revision — using the
-   `terminal-browser-<version>-windows-x64.exe` installer. You also need a
-   terminal that speaks the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
-   WezTerm is the one this is tested in.
+1. Use a terminal that speaks the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
+   WezTerm and Ghostty are the ones this is tested in.
 2. Install tode from the [releases page](https://github.com/fukuyori/terminal-code/releases):
    run `tode-<version>-windows-x64.exe`. It is signed, installs per-user under
    `%LOCALAPPDATA%\Programs\tode` without elevation, and offers to add `tode`
-   to your user PATH.
+   to your user PATH. It carries everything it draws with: pixel's Electron,
+   the engine, and a `node.exe`.
 3. Open a new terminal and run `tode`.
 
 The first open fetches VSCodium's `reh-web` server — the same OSS vscode server
@@ -82,7 +81,46 @@ snippets and extensions over from a vscode-compatible editor already on the
 machine; `tode --install-extension <id>` installs one from Open VSX. The full
 command list is under [Usage](#usage).
 
+### New on Windows in 0.4.2-win.1
+
+This release merges the complete upstream `v0.4.2` source (commit
+`6644166`) into the Windows branch. The full record is in
+[CHANGELOG.md](CHANGELOG.md).
+
+**No separate terminal-browser.** Upstream moved from fetching a
+terminal-browser build to running on [pixel](https://github.com/zenbu-labs/pixel)
+directly. Windows follows: pixel's patched Electron (`pixel.exe`) and its
+Windows engine (`pixel.node`) come from the terminal-browser fork's own build and
+are installed with tode, next to a `node.exe` that runs the `tode` command. An
+installed terminal-browser is no longer used and can be removed on its own.
+
+**One process per window.** A pixel process can attach to only one console, so
+on Windows each `tode` window starts a process of its own instead of sharing one
+the way upstream does on macOS and Linux. A second `tode` in another pane is a
+second process; `tode --shutdown` stops them all, and their child processes.
+
+**Transparency.** `tode --enable-transparency` and `tode --disable-transparency`
+make the editor see-through to the terminal; reload the window (or open a new
+one) to apply. It works with tode's own theme. A named color theme picked with
+`tode --theme "Monokai"` paints its own background, so the editor surface stays
+opaque until `tode --theme` goes back to the terminal's colours.
+
+**Known limits.**
+
+- The IME conversion box can appear away from the caret. It follows the
+  terminal's cursor, and pixel leaves that where it last drew
+  ([terminal-browser#3](https://github.com/fukuyori/terminal-browser/issues/3)).
+  Committed text lands in the right place.
+- WezTerm may hold `Ctrl+Q` and `Ctrl+Shift+Q` before they reach the editor.
+  `tode --quit` closes a window from any shell, and `tode --shortcut-setup`
+  frees the chords.
+- `tode --ssh` is now built on pixel's SSH support. It was not re-run on
+  Windows for this release.
+
 ### New on Windows in 0.3.4-win.1
+
+*The browser this section describes, a separately installed terminal-browser,
+is replaced by the bundled pixel in 0.4.2-win.1 above.*
 
 This release merges the complete upstream `v0.3.4` source into the Windows
 branch. The Windows-specific integration is described below; the full release
@@ -168,8 +206,10 @@ npm run dist:windows
 That stages the build into `%LOCALAPPDATA%\Programs\tode`, writes
 `bin\tode.cmd`, and adds that `bin` directory to the user PATH. A build is
 named after the upstream version this fork builds on plus its own revision,
-the way terminal-browser's Windows builds are: `0.3.4-win.1` is the first
-Windows build on upstream `0.3.4`. The current one is the `$TodeWindowsVersion`
+the way terminal-browser's Windows builds are: `0.4.2-win.1` is the first
+Windows build on upstream `0.4.2`. Building needs the terminal-browser checkout
+that holds the Windows build of pixel: pass `-TerminalBrowser <dir>` to the
+build scripts or set `TODE_TERMINAL_BROWSER`. The current one is the `$TodeWindowsVersion`
 default at the top of `scripts\stage-windows.ps1`, shared by the dev install
 and the release scripts — edit that line to cut a new one, or pass `-Version`
 for a one-off. It ends up in `VERSION`, which is what `tode --version` reports.
@@ -241,6 +281,8 @@ Commands, each as the first argument:
                         every open after it keeps that theme instead of
                         regenerating one from the terminal. `--theme` with no
                         argument goes back to the terminal's own colours
+  --enable-transparency Make the editor transparent
+  --disable-transparency Make the editor opaque again
   --serve [path]        Start code server and print its url
   --skill               An agent skill to assist with modifying terminal-code
   --upgrade [--check]   Upgrade terminal-code to the latest version
@@ -275,7 +317,7 @@ requires:
 
 `tode --ssh` improves on this by running only the backend of vscode on the remote machine. The frontend is still running locally on your device, so vscode is able to respond to interactions ~instantly. Any network requests will get proxied over the ssh connection.
 
-On Windows this requires terminal-browser `0.8.0-win.1`, plus OpenSSH Client
+On Windows this requires OpenSSH Client
 and `tar.exe` on `PATH`. SSH host aliases are supported. Key authentication or
 `ssh-agent` is recommended because preparing the remote bundle may open more
 than one SSH connection. The remote bundle currently supports Unix hosts.
@@ -284,14 +326,13 @@ than one SSH connection. The remote bundle currently supports Unix hosts.
 
 Windows support is experimental, and this is what it is made of:
 
-- **The browser.** terminal-browser's [Windows
-  build](https://github.com/fukuyori/terminal-browser/releases) draws the pane.
-  tode finds it wherever its installer put it
-  (`%LOCALAPPDATA%\Programs\terminal-browser`) and runs it from there, with the
-  `node.exe` that package ships — nothing is copied or downloaded. You still need
-  a terminal that speaks the [kitty graphics
-  protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/); WezTerm is the
-  one this has been tested in.
+- **The browser.** [pixel](https://github.com/zenbu-labs/pixel) draws the pane,
+  from the Windows build in the terminal-browser fork. Its Electron
+  (`pixel.exe`) and engine (`pixel.node`) are installed with tode under
+  `node_modules\@zenbu-labs`, and the `tode` command runs on a `node.exe` in
+  `runtime\` — nothing is downloaded. You still need a terminal that speaks the
+  [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/);
+  WezTerm and Ghostty are the ones this has been tested in.
 - **The editor server.** code-server has no Windows build — its releases are
   linux and macos only, and the npm package's postinstall just fetches one of
   those. So on Windows tode runs [VSCodium's `reh-web`

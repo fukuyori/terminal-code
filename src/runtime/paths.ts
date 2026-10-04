@@ -35,7 +35,6 @@ export const INSTALL_ROOT =
       path.resolve(process.env.TODE_INSTALL_ROOT)
     : path.resolve(__dirname, "..", "..");
 
-export const VENDOR_DIR = path.join(INSTALL_ROOT, "vendor");
 
 export const DEFAULT_INSTALL_ROOT = WINDOWS
   ? path.join(LOCAL_APP_DATA, "Programs", "tode")
@@ -45,7 +44,6 @@ export const DATA_DIR = home("XDG_DATA_HOME", ".local/share", "data");
 export const STATE_DIR = home("XDG_STATE_HOME", ".local/state", "state");
 export const CACHE_DIR = home("XDG_CACHE_HOME", ".cache", "cache");
 
-export const RUNTIME_DIR = path.join(DATA_DIR, "runtime");
 export const LOGS_DIR = path.join(STATE_DIR, "logs");
 
 /** Where a window's ipc endpoint is advertised. On posix the files in here are
@@ -63,11 +61,3 @@ export function shimFile(): string {
       : path.join(HOME, ".local", "bin");
   return path.join(binHome, "tode");
 }
-
-export const BROWSER_HOME = {
-  data: path.join(DATA_DIR, "browser", "share"),
-  state: path.join(STATE_DIR, "browser", "state"),
-  cache: path.join(CACHE_DIR, "browser"),
-  // not sure why this is called chromium thats just wrong
-  appData: path.join(DATA_DIR, "browser", "chromium"),
-};

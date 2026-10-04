@@ -53,7 +53,7 @@ if ($Version -ne $payloadVersion) {
 
 $match = [regex]::Match($Version, '^v?(?<base>\d+\.\d+\.\d+)(?:-win\.(?<fork>\d+))?$')
 if (-not $match.Success) {
-    throw "invalid Windows release version: $Version; expected a version such as 0.3.4-win.1"
+    throw "invalid Windows release version: $Version; expected a version such as 0.4.2-win.1"
 }
 $fork = if ($match.Groups["fork"].Success) { $match.Groups["fork"].Value } else { "0" }
 $fileVersion = "$($match.Groups['base'].Value).$fork"

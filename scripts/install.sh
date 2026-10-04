@@ -8,6 +8,7 @@ PLATFORMS="__PLATFORMS__"
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) TARGET=darwin-arm64 ;;
+  Darwin-x86_64) TARGET=darwin-x64 ;;
   Linux-x86_64|Linux-amd64) TARGET=linux-x64 ;;
   Linux-aarch64|Linux-arm64) TARGET=linux-arm64 ;;
   *)
@@ -53,6 +54,25 @@ tar -xzf "$TARBALL" -C "$APP.new" --strip-components 1
 
 [ -f "$APP.new/dist/main.js" ] || { echo "the tarball is missing dist/main.js" >&2; exit 1; }
 
+SERVER_STATE="$STATE_HOME/tode/server.json"
+PIDS="$(pgrep -f "$APP/dist/app/daemon.js" 2>/dev/null || true)"
+PIDS="$PIDS $(pgrep -f "$APP/dist/codeserver/injector-main.js" 2>/dev/null || true)"
+if [ -f "$SERVER_STATE" ]; then
+  PIDS="$PIDS $(grep -oE '"(pid|injectorPid)": *[0-9]+' "$SERVER_STATE" | grep -oE '[0-9]+$' || true)"
+fi
+for PID in $PIDS; do kill "$PID" 2>/dev/null || true; done
+# give them a couple of seconds to leave, then insist
+LEFT=""
+for _ in $(seq 1 20); do
+  LEFT=""
+  for PID in $PIDS; do kill -0 "$PID" 2>/dev/null && LEFT="$LEFT $PID"; done
+  [ -z "$LEFT" ] && break
+  sleep 0.1
+done
+for PID in $LEFT; do kill -9 "$PID" 2>/dev/null || true; done
+rm -f "$SERVER_STATE"
+rm -f "$STATE_HOME"/tode/daemon/*.sock "$STATE_HOME"/tode/daemon/*.pid
+
 rm -rf "$APP.old"
 [ -d "$APP" ] && mv "$APP" "$APP.old"
 mkdir -p "$(dirname "$APP")"
@@ -66,7 +86,7 @@ chmod +x "$BIN_HOME/tode"
 # the vendored electron needs the usual chromium system libraries; say which
 # ones are missing rather than failing later with a loader error
 if [ "$(uname -s)" = Linux ]; then
-  MISSING="$(ldd "$APP/vendor/terminal-browser/electron/electron" 2>/dev/null | awk '/not found/{print $1}' | sort -u || true)"
+  MISSING="$(ldd "$APP/node_modules/@zenbu-labs/pixel/electron/dist/pixel" 2>/dev/null | awk '/not found/{print $1}' | sort -u || true)"
   if [ -n "$MISSING" ]; then
     echo "warning: missing system libraries:" >&2
     printf '  %s\n' $MISSING >&2

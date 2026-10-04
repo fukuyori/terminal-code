@@ -2,7 +2,7 @@
 
 Use this checklist when advancing the Windows fork to a new upstream release.
 The Windows version combines the upstream version and the Windows fork
-revision, for example `0.3.4-win.1`.
+revision, for example `0.4.2-win.1`.
 
 ## Upstream integration
 
@@ -18,6 +18,16 @@ revision, for example `0.3.4-win.1`.
       runtime dependency, including all CLI features used by the new release.
 - [ ] Before publishing, verify that the matching Windows runtime installer is
       available to users or deliberately included in the release.
+
+For the 0.4.2 integration, review these upstream code surfaces:
+
+- `src/app/protocol.ts`, `src/app/daemon.ts`, `src/app/control.ts` (the window
+  process: Windows runs one per window, over a named pipe)
+- `src/launch.ts`, `src/runtime/launcher.ts`, `src/runtime/fetch.ts`
+- `src/profile.ts` (theme and transparency), `src/bridge.ts`, `src/bridge/extension.ts`
+- `src/ssh.ts`, `src/uninstall.ts`, `src/upgrade.ts`
+- `package.json` (the `@zenbu-labs/pixel` version), `scripts/dist.sh` (how the
+  install is vendored, mirrored by `scripts/stage-windows.ps1`)
 
 For the 0.3.4 integration, review these upstream code surfaces:
 
@@ -41,8 +51,15 @@ For the 0.3.4 integration, review these upstream code surfaces:
       and limitations in both languages.
 - [ ] `scripts/installer-windows.ps1`: update the four-part Windows file
       version example.
-- [ ] `src/runtime/release.ts`: update the compatible terminal-browser pin for
-      each platform and keep `scripts/release.sh` pin extraction in sync.
+- [ ] pixel: the Windows build comes from the terminal-browser checkout named by
+      `-TerminalBrowser` or `TODE_TERMINAL_BROWSER` (there is no pin in the
+      source any more). Build pixel there first, then check the `PIXEL` file the
+      stage writes (terminal-browser commit, pixel version, `pixel.node` hash) and
+      that `package.json`'s `@zenbu-labs/pixel` version is the one upstream asks
+      for. Record any difference between the two in the CHANGELOG.
+- [ ] Signing: `release-windows.ps1 -Sign` signs the payload's binaries before
+      the ZIP, and `installer-windows.ps1 -Sign` refuses unsigned ones. Both are
+      run by the maintainer, never in CI or by the assistant.
 
 The root `package.json` and `package-lock.json` versions are private npm
 package metadata, not the Windows release version. `VERSION`, release

@@ -44,7 +44,7 @@ foreach ($relativePath in $required) {
 
 if (-not $Version) {
     # A Windows file version is four numbers, so the fork revision of
-    # 0.3.4-win.1 becomes the fourth one: 0.3.4.1.
+    # 0.4.2-win.1 becomes the fourth one: 0.4.2.1.
     $payloadVersion = (Get-Content -LiteralPath (Join-Path $payload "VERSION") -Raw).Trim()
     $match = [regex]::Match($payloadVersion, '^v?(?<base>\d+\.\d+\.\d+)(?:-win\.(?<fork>\d+))?$')
     if ($match.Success) {
@@ -72,6 +72,17 @@ if (-not $IsccPath) {
 }
 if (-not $IsccPath -or -not (Test-Path -LiteralPath $IsccPath -PathType Leaf)) {
     throw "ISCC.exe was not found; install Inno Setup 6 or pass -IsccPath"
+}
+
+if ($Sign) {
+    # the installer carries the payload's binaries as they are, so they have to
+    # be signed already: release-windows.ps1 -Sign does it before the zip too
+    $unsigned = @(Get-ChildItem -LiteralPath $payload -Recurse -File -Include *.exe, *.dll, *.node |
+        Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne "Valid" })
+    if ($unsigned.Count -gt 0) {
+        $names = ($unsigned | Select-Object -First 5 | ForEach-Object { $_.FullName.Substring($payload.Length + 1) }) -join ", "
+        throw "$($unsigned.Count) payload binaries are not signed ($names); run scripts\release-windows.ps1 -Sign"
+    }
 }
 
 $baseName = "tode-$Version-windows-x64"

@@ -6,6 +6,85 @@ This file records notable changes to the Windows-native fork of terminal-code.
 The version before `-win.N` identifies the upstream terminal-code release; the
 suffix identifies the Windows fork revision based on that release.
 
+## 0.4.2-win.1 (unreleased)
+
+This release integrates the complete upstream terminal-code `v0.4.2` source at
+commit `6644166` into the Windows-native branch. Upstream's `v0.4.0` replaced
+the terminal-browser runtime with [pixel](https://github.com/zenbu-labs/pixel)
+and a window process; the 24 files that conflicted with the Windows branch were
+resolved onto that design.
+
+### Changed
+
+#### pixel replaces the separately installed terminal-browser
+
+- tode no longer looks for, downloads or runs a terminal-browser install. The
+  window is drawn by pixel's patched Electron (`pixel.exe`) and its Windows
+  engine (`pixel.node`), both taken from the terminal-browser fork's own
+  Windows build, together with the JavaScript that drives them.
+- The install carries `node_modules\@zenbu-labs\pixel`, `pixel-native-win32-x64`,
+  and a console `node.exe` under `runtime\`. `bin\tode.cmd` runs the `tode`
+  command on that `node.exe`: attaching to a console fails for a process that
+  has none, and `pixel.exe` is a GUI program even when it runs as node.
+- The pixel used is the fork's build, labelled `0.0.20`. It carries the three
+  code changes that npm's `0.0.23` has over `0.0.20` (the transparent page
+  background, the resize cursor names, the Electron download location); the two
+  were not compared in full.
+- A `PIXEL` file in the install records which terminal-browser commit and pixel
+  version the build came from, and the hash of `pixel.node`. The build checks
+  that the engine copied into the install matches the one it came from.
+- The build scripts take the terminal-browser checkout with `-TerminalBrowser`
+  or `TODE_TERMINAL_BROWSER`. `dist-windows.ps1` no longer checks for or
+  vendors terminal-browser, and the installer no longer asks for it.
+- Removed `src/runtime/release.ts`, `src/browserglue.ts`,
+  `src/browser/mainscript.ts` and their tests; `src/runtime/fetch.ts` keeps the
+  Windows target triple and archive extraction the download of the editor
+  server uses.
+
+#### One window process per window
+
+- A pixel process attaches to one console for its life, so on Windows each
+  window starts a process of its own, under a named pipe of its own, instead of
+  one process serving every window. The process exits shortly after its window
+  closes.
+- `tode --shutdown`, `--upgrade` and `--uninstall` find these processes by
+  their command line and stop them together with the editor server's child
+  processes (`taskkill /T`), so nothing is left behind.
+- The bridge extension tells every window process about a transparency change.
+
+#### Theme choices are kept
+
+- A theme file chosen with `tode --theme <file>` is no longer overruled by the
+  terminal's colours arriving later; the check that the removed browser script
+  made now lives in the window process.
+- `tode --theme` and the active theme follow the transparency setting.
+
+### Added
+
+- `tode --enable-transparency` and `tode --disable-transparency`, from
+  upstream. A named color theme paints its own background, so the editor surface
+  is transparent only with tode's own theme.
+- Upstream's other `v0.4.x` changes: the window process and its protocol, and
+  the SSH session built on pixel's SSH support.
+
+### Signing
+
+- `scripts\sign-windows.ps1 -Payload` signs the binaries inside the staged
+  install (`pixel.exe`, its dlls, `pixel.node`). `release-windows.ps1 -Sign`
+  does it before the ZIP is made, and `installer-windows.ps1 -Sign` stops if any
+  are still unsigned.
+
+### Known limitations
+
+- The IME conversion box follows the terminal's cursor, which pixel leaves at
+  the last place it drew, so the box can appear away from the caret
+  ([terminal-browser#3](https://github.com/fukuyori/terminal-browser/issues/3)).
+- WezTerm may hold `Ctrl+Q` and `Ctrl+Shift+Q`. `tode --quit` and
+  `tode --shortcut-setup` are the ways around it.
+- `tode --ssh` now uses pixel's SSH support and was not re-run on Windows.
+- Upgrading from `0.3.4-win.1` through `tode --upgrade` was not run; an
+  existing terminal-browser install is simply no longer used.
+
 ## 0.3.4-win.1 (unreleased)
 
 This release integrates the complete upstream terminal-code `v0.3.4` source at

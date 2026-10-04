@@ -7,9 +7,10 @@
     The same shape as terminal-browser's sign-windows.ps1, so the two release
     flows sign the same way. Inno Setup calls this per file for the setup and
     the uninstaller it assembles; run with no arguments it finds whatever in
-    out\windows-release still needs a signature. The payload itself ships no
-    native binaries — the .cmd and .js files are not signable — so the
-    installer is the whole surface.
+    out\windows-release still needs a signature. With -Payload it signs the
+    native binaries inside the staged payload instead (pixel's electron, its
+    dlls, and the engine pixel.node), which release-windows.ps1 -Sign does
+    before the zip is made and the installer-windows.ps1 -Sign checks for.
 #>
 [CmdletBinding()]
 param(
@@ -17,7 +18,8 @@ param(
     [string[]]$Path,
     [string]$CertSubject = $env:CODESIGN_CERT,
     [string]$TimestampUrl = "http://timestamp.digicert.com",
-    [string]$SignTool = ""
+    [string]$SignTool = "",
+    [switch]$Payload
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,6 +59,16 @@ function ResolveSignTool([string]$Explicit) {
     return $newest.FullName
 }
 
+function PayloadTargets {
+    $stage = Join-Path $root "out\windows-release\tode"
+    if (-not (Test-Path -LiteralPath $stage)) {
+        throw "no staged payload at $stage; run scripts\release-windows.ps1 first"
+    }
+    Get-ChildItem -LiteralPath $stage -Recurse -File -Include *.exe, *.dll, *.node |
+        Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne "Valid" } |
+        ForEach-Object { $_.FullName }
+}
+
 function DefaultTargets {
     $out = Join-Path $root "out\windows-release"
     $targets = @()
@@ -77,7 +89,7 @@ if ($certificates.Count -eq 0) {
     throw "no code signing certificate matches '$CertSubject'; if it lives on a token, plug it in"
 }
 
-$targets = @(if ($Path) { $Path } else { DefaultTargets })
+$targets = @(if ($Path) { $Path } elseif ($Payload) { PayloadTargets } else { DefaultTargets })
 if ($targets.Count -eq 0) {
     Write-Output "everything is signed already"
     return

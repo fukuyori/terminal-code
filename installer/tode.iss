@@ -58,8 +58,6 @@ english.AddToPath=Add tode to the user PATH
 japanese.AddToPath=tode をユーザー PATH に追加する
 english.AdditionalTasks=Additional tasks:
 japanese.AdditionalTasks=追加タスク:
-english.NeedsBrowser=tode needs terminal-browser, which is not installed yet. Install it from%nhttps://github.com/fukuyori/terminal-browser/releases%nbefore running tode.
-japanese.NeedsBrowser=tode の実行には terminal-browser が必要ですが、まだインストールされていません。%nhttps://github.com/fukuyori/terminal-browser/releases%nからインストールしてから tode を実行してください。
 
 [Tasks]
 Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:AdditionalTasks}"; Flags: checkedonce
@@ -123,22 +121,12 @@ begin
     RegWriteExpandStringValue(HKCU, UserEnvironmentKey, 'Path', PaddedPath);
 end;
 
-// tode draws its pane with terminal-browser, installed separately. A missing
-// browser is worth a note on the way out, not a reason to refuse the install.
-function HasBrowser: Boolean;
-begin
-  Result := FileExists(ExpandConstant(
-    '{localappdata}\Programs\terminal-browser\cli\dist\main.js'));
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     if WizardIsTaskSelected('addtopath') then
       AddToUserPath(ExpandConstant('{app}\bin'));
-    if not HasBrowser then
-      SuppressibleMsgBox(CustomMessage('NeedsBrowser'), mbInformation, MB_OK, IDOK);
   end;
 end;
 

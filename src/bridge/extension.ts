@@ -49,6 +49,7 @@ interface VscodeApi {
     }>;
   };
   window: {
+    showInformationMessage(message: string, ...items: string[]): PromiseLike<string | undefined>;
     showErrorMessage(
       message: string,
       options: { modal: boolean },
@@ -72,9 +73,11 @@ interface VscodeApi {
     getConfiguration(): {
       get(key: string): unknown;
       inspect(key: string): { globalValue?: unknown } | undefined;
-      update(key: string, value: unknown, target: unknown): unknown;
+      update(key: string, value: unknown, target: unknown): PromiseLike<void>;
     };
-    onDidChangeConfiguration(listener: (event: { affectsConfiguration(key: string): boolean }) => void): Disposable;
+    onDidChangeConfiguration(
+      listener: (event: { affectsConfiguration(section: string): boolean }) => void,
+    ): Disposable;
     workspaceFolders?: readonly { uri: Uri }[];
     openTextDocument(uri: Uri): Promise<{ uri: Uri }>;
     updateWorkspaceFolders(start: number, deleteCount: number, ...folders: Array<{ uri: Uri }>): boolean;
@@ -96,6 +99,8 @@ export function bridgeMain(ctx: BridgeCtx): void {
   const QUIT_HINT = ctx.quitHint;
   const STARTUP_OPEN_FILE = ctx.startupOpenFile;
   const COLOR_THEME_FILE = ctx.colorThemeFile;
+  const DAEMON_DIR = ctx.daemonDir;
+  const TRANSPARENCY_SETTING = ctx.transparencySetting;
 
   const VIEW_COMMANDS: Record<string, string> = { scm: "workbench.view.scm" };
 
@@ -121,7 +126,68 @@ export function bridgeMain(ctx: BridgeCtx): void {
   const NL = String.fromCharCode(10);
 
   function quitTode(): void {
-    void vscode.env.openExternal(vscode.Uri.parse("terminal-browser://quit"));
+    void vscode.env.openExternal(vscode.Uri.parse("pixel://quit"));
+  }
+
+  function transparencyOn(): boolean {
+    return vscode.workspace.getConfiguration().get(TRANSPARENCY_SETTING) === true;
+  }
+
+  function syncTransparencyContext(): void {
+    void vscode.commands.executeCommand("setContext", "tode.transparent", transparencyOn());
+  }
+
+  /** Every window process, each at the address its entry in the directory
+   * names: the socket file itself, or on Windows a `.pipe` file holding the
+   * name of the pipe. Where a process serves one window each, every one of them
+   * has to hear it. */
+  function windowProcesses(): string[] {
+    let names: string[];
+    try {
+      names = fs.readdirSync(DAEMON_DIR);
+    } catch {
+      return [];
+    }
+    const found: string[] = [];
+    for (const name of names) {
+      const file = path.join(DAEMON_DIR, name);
+      if (name.endsWith(".sock")) found.push(file);
+      else if (name.endsWith(".pipe")) {
+        try {
+          const address = fs.readFileSync(file, "utf8").trim();
+          if (address) found.push(address);
+        } catch {}
+      }
+    }
+    return found;
+  }
+
+  function tellWindowProcess(on: boolean): void {
+    for (const address of windowProcesses()) {
+      const connection = net.connect(address);
+      connection.on("error", () => {});
+      connection.on("connect", () => {
+        connection.end(JSON.stringify({ cmd: "transparency", on }) + NL);
+      });
+    }
+  }
+
+  function setTransparency(on: boolean): PromiseLike<void> {
+    return vscode.workspace.getConfiguration().update(TRANSPARENCY_SETTING, on, vscode.ConfigurationTarget.Global);
+  }
+
+  function offerReload(): void {
+    const on = transparencyOn();
+    void vscode.window
+      .showInformationMessage(
+        on
+          ? "Transparency is enabled. Reload the window for it to take effect."
+          : "Transparency is disabled. Reload the window for it to take effect.",
+        "Reload Window",
+      )
+      .then((picked) => {
+        if (picked) tellWindowProcess(on);
+      });
   }
 
   /** Whether tode's colours are the ones in charge.
@@ -394,6 +460,11 @@ export function bridgeMain(ctx: BridgeCtx): void {
       applyColorTheme(request.colorTheme);
       return;
     }
+    if (request.transparency !== undefined) {
+      await setTransparency(request.transparency);
+      acknowledge();
+      return;
+    }
     if (request.theme) {
       if (!todeOwnsTheme()) return;
       applyThemeDocument(request.theme);
@@ -471,6 +542,16 @@ export function bridgeMain(ctx: BridgeCtx): void {
 
   function activate(context: ExtensionContext): void {
     context.subscriptions.push(vscode.commands.registerCommand("tode.quit", quitTode));
+    context.subscriptions.push(
+      vscode.commands.registerCommand("tode.enableTransparency", () => setTransparency(true)),
+      vscode.commands.registerCommand("tode.disableTransparency", () => setTransparency(false)),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!event.affectsConfiguration(TRANSPARENCY_SETTING)) return;
+        syncTransparencyContext();
+        offerReload();
+      }),
+    );
+    syncTransparencyContext();
 
     let confirmShowing = false;
     context.subscriptions.push(

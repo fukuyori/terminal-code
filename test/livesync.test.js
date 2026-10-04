@@ -161,7 +161,8 @@ test("the startup marker replays views and diffs once, then burns", async () => 
     const { extension } = loadBridgeSandbox(source, home, {
       commands: {
         registerCommand: () => ({ dispose() {} }),
-        executeCommand: (command, ...rest) => ran.push([command, ...rest.map(String)]),
+        // the context key for the transparency commands is set on every activation
+        executeCommand: (command, ...rest) => command !== "setContext" && ran.push([command, ...rest.map(String)]),
       },
       Uri: { file: (p) => ({ toString: () => `file://${p}` }) },
     });
@@ -182,7 +183,7 @@ test("the startup marker replays views and diffs once, then burns", async () => 
     const again = loadBridgeSandbox(source, home, {
       commands: {
         registerCommand: () => ({ dispose() {} }),
-        executeCommand: (command) => again.ran.push(command),
+        executeCommand: (command) => command !== "setContext" && again.ran.push(command),
       },
     });
     again.ran = [];
@@ -261,73 +262,6 @@ test("a vscode theme file, comments and all, lands in the live slot and the exte
     restoreEnv("XDG_DATA_HOME", prev);
     fs.rmSync(home, { recursive: true, force: true });
     for (const key of Object.keys(require.cache)) delete require.cache[key];
-  }
-});
-
-test("the browser main script turns a colours message into a theme at every window socket", async () => {
-  const { mainScriptSource } = require("../dist/browserglue.js");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tode-browser-main-"));
-  const sockDir = path.join(dir, "ipc");
-  fs.mkdirSync(sockDir);
-  const dist = path.resolve(__dirname, "..", "dist");
-  const script = path.join(dir, "browser-main.js");
-  fs.writeFileSync(
-    script,
-    mainScriptSource({
-      socketDir: sockDir,
-      timingFile: path.join(dir, "timing.json"),
-      modules: {
-        livesync: path.join(dist, "livesync.js"),
-        generate: path.join(dist, "theme", "generate.js"),
-        ipc: path.join(dist, "ipc.js"),
-      },
-    }),
-  );
-  // the script requires electron for ipcMain; resolve it to a stub the same
-  // way the browser process would, through node_modules next to the script
-  const electronStub = path.join(dir, "node_modules", "electron");
-  fs.mkdirSync(electronStub, { recursive: true });
-  fs.writeFileSync(
-    path.join(electronStub, "index.js"),
-    "exports.subscribed = [];\n" +
-      "exports.ipcMain = { on(channel, listener) { exports.subscribed.push({ channel, listener }); } };\n",
-  );
-
-  const received = [];
-  const server = net.createServer((connection) => {
-    connection.on("data", (chunk) => {
-      received.push(JSON.parse(chunk.toString("utf8").split("\n")[0]));
-      connection.end('{"ok":true}\n');
-    });
-  });
-  const window = fakeWindow(sockDir, "w1");
-  await new Promise((r) => server.listen(window.address, r));
-  try {
-    // the pinned build requires the module for its side effects; subscribing
-    // to tode's ipc channel is that side effect
-    require(script);
-    const electron = require(path.join(electronStub, "index.js"));
-    assert.equal(electron.subscribed.length, 1);
-    assert.equal(electron.subscribed[0].channel, "tode:message");
-    const handlers = [(message) => electron.subscribed[0].listener(null, message)];
-
-    // junk does not crash and does not reach the socket
-    handlers[0](null);
-    handlers[0]({ type: "theme" });
-    handlers[0]({ type: "theme", colors: { background: [0, 0, 40] } });
-
-    handlers[0]({
-      type: "theme",
-      colors: { background: BLUE.background, foreground: BLUE.foreground, ansi: BLUE.ansi },
-    });
-    const deadline = Date.now() + 2000;
-    while (received.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
-    assert.equal(received.length, 1, "only the whole palette becomes a theme");
-    assert.deepEqual(received[0].theme, JSON.parse(JSON.stringify(generateTheme(BLUE))));
-  } finally {
-    server.close();
-    delete require.cache[script];
-    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

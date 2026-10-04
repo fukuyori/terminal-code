@@ -6,6 +6,83 @@
 `-win.N` より前の番号はベースとなるupstream terminal-codeのリリースを示し、
 末尾はそのリリースをベースにしたWindows forkのリビジョンを示します。
 
+## 0.4.2-win.1（未リリース）
+
+このリリースでは、upstream terminal-code `v0.4.2` のソース全体（コミット
+`6644166`）をWindowsネイティブブランチへ統合しました。upstreamの `v0.4.0` は
+terminal-browserのランタイムを[pixel](https://github.com/zenbu-labs/pixel)と
+ウィンドウ用プロセスに置き換えました。Windowsブランチと競合した24ファイルは、
+この設計に合わせて解消しています。
+
+### 変更
+
+#### 別途インストールしたterminal-browserに代わりpixelを使用
+
+- todeは、terminal-browserのインストールを探したり、ダウンロードしたり、実行したり
+  しなくなりました。ウィンドウは、pixelのパッチ済みElectron（`pixel.exe`）と
+  Windows用エンジン（`pixel.node`）、およびそれらを動かすJavaScriptで描画されます。
+  いずれもterminal-browser forkのWindows版ビルドから取り込みます。
+- インストールには `node_modules\@zenbu-labs\pixel`、`pixel-native-win32-x64`、
+  `runtime\` 配下のコンソール型 `node.exe` が含まれます。`bin\tode.cmd` は、この
+  `node.exe` で `tode` コマンドを実行します。コンソールを持たないプロセスは
+  コンソールへの接続に失敗し、`pixel.exe` はNodeとして動かしてもGUIプログラム
+  だからです。
+- 使用するpixelはforkのビルドで、版表記は `0.0.20` です。npmの `0.0.23` が
+  `0.0.20` に対して持つ3つのコード変更（透過時のページ背景、リサイズ用カーソル名、
+  Electronのダウンロード先）は含まれていますが、全体の比較は行っていません。
+- インストール内の `PIXEL` ファイルに、取り込み元のterminal-browserのコミット、
+  pixelの版、`pixel.node` のハッシュを記録します。ビルド時に、インストールへ
+  コピーしたエンジンが元のものと一致することを検査します。
+- ビルドスクリプトは、terminal-browserのチェックアウトを `-TerminalBrowser`
+  または `TODE_TERMINAL_BROWSER` で受け取ります。`dist-windows.ps1` は
+  terminal-browserの検査と同梱を行わなくなり、インストーラーもそれを要求しません。
+- `src/runtime/release.ts`、`src/browserglue.ts`、`src/browser/mainscript.ts` と
+  それらのテストを削除しました。`src/runtime/fetch.ts` は、エディターサーバーの
+  ダウンロードが使うWindowsのターゲット識別子とアーカイブ展開を保持します。
+
+#### ウィンドウごとに1つのウィンドウ用プロセス
+
+- pixelのプロセスは生存中1つのコンソールに接続し続けるため、Windowsでは、
+  1つのプロセスが全ウィンドウを担当する代わりに、ウィンドウごとに専用の名前付き
+  パイプを持つプロセスを起動します。プロセスはウィンドウが閉じた直後に終了します。
+- `tode --shutdown`、`--upgrade`、`--uninstall` は、これらのプロセスをコマンドライン
+  から見つけ、エディターサーバーの子プロセスとあわせて停止します（`taskkill /T`）。
+  プロセスが残りません。
+- ブリッジ拡張は、透過設定の変更をすべてのウィンドウ用プロセスへ伝えます。
+
+#### テーマの選択を維持
+
+- `tode --theme <file>` で選んだテーマファイルが、後から届くターミナルの配色で
+  上書きされなくなりました。削除したブラウザー用スクリプトが行っていた確認を、
+  ウィンドウ用プロセスが行います。
+- `tode --theme` と現在のテーマは、透過設定に従います。
+
+### 追加
+
+- upstreamの `tode --enable-transparency` と `tode --disable-transparency`。
+  名前で選んだカラーテーマは自身の背景を描くため、エディター面が透過するのは
+  todeの標準テーマのときだけです。
+- upstreamのその他の `v0.4.x` の変更：ウィンドウ用プロセスとそのプロトコル、
+  pixelのSSH対応を使ったSSHセッション。
+
+### 署名
+
+- `scripts\sign-windows.ps1 -Payload` は、ステージしたインストール内のバイナリ
+  （`pixel.exe`、そのdll、`pixel.node`）に署名します。`release-windows.ps1 -Sign` は
+  ZIPを作る前に署名し、`installer-windows.ps1 -Sign` は未署名のものが残っていれば
+  停止します。
+
+### 既知の制限
+
+- IMEの変換候補ボックスはターミナルのカーソルに従いますが、pixelはそれを最後に
+  描画した位置に残すため、キャレットから離れた位置に出ることがあります
+  （[terminal-browser#3](https://github.com/fukuyori/terminal-browser/issues/3)）。
+- WezTermが `Ctrl+Q` と `Ctrl+Shift+Q` を取ることがあります。回避方法は
+  `tode --quit` と `tode --shortcut-setup` です。
+- `tode --ssh` はpixelのSSH対応を使う実装になり、Windows上では再確認していません。
+- `0.3.4-win.1` から `tode --upgrade` で更新する手順は確認していません。既存の
+  terminal-browserのインストールは、単に使用されなくなります。
+
 ## 0.3.4-win.1（未リリース）
 
 このリリースでは、upstream terminal-code `v0.3.4` のソース全体（コミット

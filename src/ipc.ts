@@ -2,6 +2,8 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
+import { IPC_DIR } from "./runtime/paths";
+
 export interface OpenFile {
   path: string;
   line?: number;
@@ -21,6 +23,8 @@ export interface OpenRequest {
   colorTheme?: string;
   /** close the window this reaches, the same way the quit chord does */
   quit?: boolean;
+  /** turn the terminal-transparent window on or off */
+  transparency?: boolean;
 }
 
 /** Windows has no socket in the filesystem, so a window advertises itself with a
@@ -118,4 +122,12 @@ export function parseGoto(argument: string): OpenFile {
     line: Number(match[2]),
     column: match[3] ? Number(match[3]) : 1,
   };
+}
+
+export function windowSockets(): string[] {
+  return listEndpoints(ipcSocketDir()).map((endpoint) => endpoint.address);
+}
+
+export function ipcSocketDir(): string {
+  return IPC_DIR;
 }

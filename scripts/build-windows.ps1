@@ -11,7 +11,8 @@
 param(
     [string]$Version,
     [string]$Channel = "windows",
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [string]$TerminalBrowser = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,9 +44,13 @@ Write-Output "==> staging $Version"
 if (Test-Path -LiteralPath $out) {
     Remove-Item -LiteralPath $out -Recurse -Force
 }
-New-TodeStage $root $stage $Version $Channel
+New-TodeStage $root $stage $Version $Channel $TerminalBrowser
 
-$required = @("bin\tode.cmd", "dist\main.js", "package.json", "VERSION", "CHANNEL")
+$required = @(
+    "bin\tode.cmd", "dist\main.js", "package.json", "VERSION", "CHANNEL", "PIXEL", "runtime\node.exe",
+    "node_modules\@zenbu-labs\pixel\electron\dist\pixel.exe",
+    "node_modules\@zenbu-labs\pixel-native-win32-x64\pixel.node"
+)
 foreach ($relativePath in $required) {
     $path = Join-Path $stage $relativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {

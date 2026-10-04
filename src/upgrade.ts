@@ -2,9 +2,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { openWindows, shutdownDaemons } from "./app/control";
+import type { Windows } from "./app/control";
+import { stopServer } from "./codeserver/server";
 import { DEFAULT_INSTALL_ROOT, INSTALL_ROOT, STATE_DIR, WINDOWS, shimFile } from "./runtime/paths";
 import { extractArchive } from "./runtime/platform";
-import { targetTriple } from "./runtime/release";
+import { targetTriple } from "./runtime/fetch";
 
 const ORIGIN = process.env.TODE_RELEASE_ORIGIN ?? "https://tode.sh/install";
 
@@ -25,8 +28,6 @@ export interface Build {
   url: string;
 }
 
-/** What the release worker serves: one entry per target, each carrying its
- * own download url. */
 interface Manifest {
   version: string;
   channel: string;
@@ -107,8 +108,6 @@ async function fetchBuild(build: Build, onProgress?: (fraction: number) => void)
   return tarball;
 }
 
-/** Unpacks beside the install and renames over it, so a failure at any point
- * leaves the working install exactly as it was. */
 function swapIn(tarball: string, root: string) {
   const staging = `${root}.new`;
   fs.rmSync(staging, { recursive: true, force: true });
@@ -147,12 +146,15 @@ export interface UpgradeOptions {
   check?: boolean;
   version?: string;
   onStage?(stage: "checking" | "downloading" | "installing", fraction: number): void;
+  /** Asked before anything is downloaded when the upgrade will close open windows. */
+  confirm?(build: Build, windows: Windows): Promise<boolean>;
 }
 
 export type Outcome =
   | { kind: "not-an-install"; root: string }
   | { kind: "current"; version: string; channel: string }
   | { kind: "available"; from: string; build: Build }
+  | { kind: "cancelled"; build: Build }
   | { kind: "upgraded"; from: string; build: Build };
 
 export async function upgrade(options: UpgradeOptions = {}): Promise<Outcome> {
@@ -167,8 +169,17 @@ export async function upgrade(options: UpgradeOptions = {}): Promise<Outcome> {
   }
   if (options.check) return { kind: "available", from: here.version, build };
 
+  if (options.confirm) {
+    const windows = await openWindows();
+    if ((windows.count > 0 || windows.unknown) && !(await options.confirm(build, windows))) {
+      return { kind: "cancelled", build };
+    }
+  }
+
   const tarball = await fetchBuild(build, (f) => options.onStage?.("downloading", f));
   options.onStage?.("installing", 0);
+  await shutdownDaemons();
+  await stopServer();
   try {
     swapIn(tarball, INSTALL_ROOT);
   } finally {

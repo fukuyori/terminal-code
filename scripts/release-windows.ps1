@@ -17,7 +17,9 @@
 param(
     [string]$Version,
     [string]$Channel = "windows",
-    [string]$Repo = "fukuyori/terminal-code"
+    [string]$Repo = "fukuyori/terminal-code",
+    [string]$TerminalBrowser = "",
+    [switch]$Sign
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,7 +37,14 @@ if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force
 # the directory name becomes the archive's single top level, which the
 # upgrade extracts with --strip-components 1
 $stage = Join-Path $out "tode"
-New-TodeStage $root $stage $Version $Channel
+New-TodeStage $root $stage $Version $Channel $TerminalBrowser
+
+if ($Sign) {
+    # before the zip, so the copy an upgrade downloads carries the signatures too
+    Write-Output "==> signing the payload"
+    & (Join-Path $PSScriptRoot "sign-windows.ps1") -Payload
+    if ($LASTEXITCODE -ne 0) { throw "signing the payload failed" }
+}
 
 Write-Output "==> packaging"
 $file = "tode-$Version-win32-x64.zip"

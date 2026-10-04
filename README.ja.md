@@ -8,22 +8,20 @@ https://github.com/user-attachments/assets/4ba0d434-896a-4ab3-9c91-5d351dacee08
 
 このリポジトリは [zenbu-labs/terminal-code](https://github.com/zenbu-labs/terminal-code)
 の fork で、Windows x64 ネイティブ版を追加しています。[WezTerm](https://wezterm.org)
-上の PowerShell 7 と、エディターをペイン内に描画する
-[terminal-browser Windows版](https://github.com/fukuyori/terminal-browser)を組み合わせて
-検証しています。Windows対応は実験的です。構成と現在の制約は
-[Windows](#windows)を参照してください。
+と Ghostty 上の PowerShell 7 で検証しています。ペインの描画は、terminal-browser の
+土台でもある [pixel](https://github.com/zenbu-labs/pixel) が行い、インストールに
+同梱されるため、ほかに何かをインストールする必要はありません。Windows対応は実験的です。
+構成と現在の制約は[Windows](#windows)を参照してください。
 
 ### Windowsへのインストール
 
-1. [terminal-browser for Windows](https://github.com/fukuyori/terminal-browser/releases)
-   `0.8.0-win.1`、または互換性のある別の `0.8.0-win.*` リビジョンを
-   `terminal-browser-<version>-windows-x64.exe` でインストールします。あわせて
-   [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
-   対応ターミナルが必要です。現在の検証対象は WezTerm です。
+1. [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+   対応ターミナルを使います。現在の検証対象は WezTerm と Ghostty です。
 2. [terminal-codeのリリースページ](https://github.com/fukuyori/terminal-code/releases)
    から `tode-<version>-windows-x64.exe` を実行します。署名済みインストーラーは
    管理者権限を使わず `%LOCALAPPDATA%\Programs\tode` にユーザー単位で
-   インストールし、`tode` をユーザーの `PATH` に追加できます。
+   インストールし、`tode` をユーザーの `PATH` に追加できます。描画に必要なもの
+   （pixel の Electron とエンジン、`node.exe`）をすべて含みます。
 3. 新しいターミナルを開き、`tode` を実行します。
 
 初回起動時には、code-serverがラップしているものと同じOSS版VS Codeサーバーである
@@ -82,7 +80,48 @@ tode --theme                # ターミナルの配色に戻す
 `tode --install-extension <id>` は Open VSX から拡張機能をインストールします。
 全コマンドは[コマンド一覧](#コマンド一覧)を参照してください。
 
+### 0.4.2-win.1でWindowsに追加された機能
+
+このリリースでは、upstream `v0.4.2`（コミット `6644166`）のソース全体を
+Windowsブランチへマージしています。変更の全記録は
+[CHANGELOG.ja.md](CHANGELOG.ja.md)を参照してください。
+
+**terminal-browserを別にインストールする必要はありません。** upstreamは、
+terminal-browserのビルドを取得して使う方式から、[pixel](https://github.com/zenbu-labs/pixel)
+を直接使う方式へ移りました。Windowsも同じ方式にしています。pixelのパッチ済み
+Electron（`pixel.exe`）とWindows用エンジン（`pixel.node`）は、terminal-browser
+forkのビルドから取り込まれ、`tode` コマンドを実行する `node.exe` とともに
+インストールされます。インストール済みのterminal-browserはもう使用されないため、
+単独で削除できます。
+
+**ウィンドウごとに1プロセス。** pixelのプロセスは1つのコンソールにしか接続できない
+ため、Windowsでは、upstreamがmacOSとLinuxで行うようにプロセスを共有せず、
+`tode` のウィンドウごとにプロセスを起動します。別のペインで `tode` を実行すると
+別のプロセスになります。`tode --shutdown` は、これらすべてとその子プロセスを止めます。
+
+**透過。** `tode --enable-transparency` と `tode --disable-transparency` で、
+エディターをターミナルに透かして表示するか切り替えます。反映にはウィンドウの
+再読み込み（または新しいウィンドウ）が必要です。todeの標準テーマで機能します。
+`tode --theme "Monokai"` のように名前で選んだカラーテーマは自身の背景を描くため、
+`tode --theme`（引数なし）でターミナルの配色に戻すまで、エディター面は不透明です。
+
+**既知の制限。**
+
+- IMEの変換候補ボックスが、キャレットから離れた位置に出ることがあります。
+  候補ボックスはターミナルのカーソル位置に出ますが、pixelはそのカーソルを最後に
+  描画した位置に残します
+  （[terminal-browser#3](https://github.com/fukuyori/terminal-browser/issues/3)）。
+  確定した文字は正しい位置に入ります。
+- WezTermが `Ctrl+Q` と `Ctrl+Shift+Q` を先に受け取り、エディターに届かないことが
+  あります。`tode --quit` は任意のシェルからウィンドウを閉じ、
+  `tode --shortcut-setup` はキーの競合を解消します。
+- `tode --ssh` はpixelのSSH対応を使う実装になりました。このリリースでは
+  Windows上で再確認していません。
+
 ### 0.3.4-win.1でWindowsに追加された機能
+
+*この節が説明する、別にインストールしたterminal-browserは、上の0.4.2-win.1で
+同梱のpixelに置き換わりました。*
 
 このリリースでは、upstream `v0.3.4` のソース全体をWindowsブランチへ
 マージしています。Windows固有の統合内容を以下に示します。リリース変更の全記録は
@@ -165,7 +204,10 @@ npm run dist:windows
 ビルドは `%LOCALAPPDATA%\Programs\tode` に配置され、`bin\tode.cmd` が作成され、
 その `bin` ディレクトリがユーザーの `PATH` に追加されます。Windows版の番号は
 ベースとなるupstream版とfork固有のリビジョンを組み合わせます。
-`0.3.4-win.1` はupstream `0.3.4` をベースにした最初のWindowsビルドです。
+`0.4.2-win.1` はupstream `0.4.2` をベースにした最初のWindowsビルドです。
+ビルドには、pixelのWindows版を含むterminal-browserのチェックアウトが必要で、
+ビルドスクリプトの `-TerminalBrowser <dir>` または環境変数
+`TODE_TERMINAL_BROWSER` で指定します。
 現在値は `scripts\stage-windows.ps1` 先頭の `$TodeWindowsVersion` で、開発版と
 リリーススクリプトが共有します。リリース時はこの値を変更し、一時的なビルドでは
 `-Version` を指定できます。値は `VERSION` に保存され、`tode --version` が表示します。
@@ -268,7 +310,7 @@ SSH接続先で `tode` を直接実行することもできますが、VS Code�
 ローカルに残るため、操作へすぐに応答でき、ネットワークリクエストだけがSSH接続を
 経由します。
 
-Windowsでは terminal-browser `0.8.0-win.1`、OpenSSH Client、`PATH` 上の
+Windowsでは OpenSSH Client、`PATH` 上の
 `tar.exe` が必要です。SSHのHostエイリアスを使用できます。リモートバンドル準備時に
 複数のSSH接続が作成される可能性があるため、鍵認証または `ssh-agent` を推奨します。
 現在のリモート対象はUnixホストです。
@@ -277,11 +319,12 @@ Windowsでは terminal-browser `0.8.0-win.1`、OpenSSH Client、`PATH` 上の
 
 Windows対応は実験的で、次の要素で構成されています。
 
-- **ブラウザー。** [terminal-browser Windows版](https://github.com/fukuyori/terminal-browser/releases)
-  がペインを描画します。todeはインストール先
-  `%LOCALAPPDATA%\Programs\terminal-browser` を直接参照し、同梱 `node.exe` で
-  実行します。ブラウザーはコピーも再ダウンロードもされません。kitty graphics
-  protocol対応ターミナルが必要で、現在の検証対象はWezTermです。
+- **ブラウザー。** [pixel](https://github.com/zenbu-labs/pixel)がペインを描画します。
+  terminal-browser forkのWindows版ビルドのElectron（`pixel.exe`）とエンジン
+  （`pixel.node`）が、`node_modules\@zenbu-labs` 配下にtodeとともにインストール
+  され、`tode` コマンドは `runtime\` の `node.exe` で実行されます。ダウンロードは
+  ありません。kitty graphics protocol対応ターミナルが必要で、現在の検証対象は
+  WezTermとGhosttyです。
 - **エディターサーバー。** code-serverのリリースはLinuxとmacOSのみなので、
   Windowsでは[VSCodiumの `reh-web` サーバー](https://github.com/VSCodium/vscodium/releases)
   を使用します。初回起動時に

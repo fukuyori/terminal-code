@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { spawn } from "node:child_process";
 
+import { shutdownDaemons } from "./app/control";
 import { stopServer } from "./codeserver/server";
 import { FONT_ASSET, assetPath, unregisterWindowsFont, userFontsDir } from "./profile";
 import {
@@ -15,8 +15,6 @@ import {
   WINDOWS,
   shimFile,
 } from "./runtime/paths";
-import { commandWith } from "./runtime/platform";
-import { localRuntime } from "./runtime/release";
 import { ghosttyConfigDir, reloadGhostty, removeFreed } from "./shortcuts/backends/ghostty";
 
 
@@ -132,20 +130,8 @@ export async function uninstallCommand(args: string[]): Promise<number> {
 
   const stop = spinner("uninstalling");
 
-  stopServer();
-  const browser = localRuntime();
-  if (browser) {
-    const shutdown = commandWith(browser.command, ["shutdown"]);
-    await new Promise<void>((resolve) => {
-      const child = spawn(shutdown.file, shutdown.args, {
-        stdio: "ignore",
-        windowsHide: true,
-        env: { ...process.env, ...(shutdown.env ?? {}) },
-      });
-      child.on("error", () => resolve());
-      child.on("exit", () => resolve());
-    });
-  }
+  await shutdownDaemons();
+  await stopServer();
 
   if (!WINDOWS && removeFreed(ghosttyConfigDir())) reloadGhostty();
 
