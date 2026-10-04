@@ -173,16 +173,25 @@ if ($LASTEXITCODE -ne 0 -or -not $targetCommit) {
 # GitHub's release endpoint can reject a non-default branch as
 # target_commitish while trying to create the tag and release together. Create
 # the lightweight tag ref first, then require gh release create to use it.
+# A tag that does not exist yet answers 404 on stderr, which Windows PowerShell 5.1
+# turns into a terminating error under "Stop"; here it is the expected answer.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $tagRef = & gh api "repos/$Repo/git/ref/tags/$tag" --jq .object.sha 2>$null
-if ($LASTEXITCODE -eq 0) {
+$tagExists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $previousPreference
+if ($tagExists) {
     $tagCommit = (& gh api "repos/$Repo/commits/$tag" --jq .sha).Trim()
     if ($LASTEXITCODE -ne 0 -or $tagCommit -ne $targetCommit) {
         throw "$tag already exists but does not point to $targetCommit"
     }
     Write-Output "==> using existing tag $tag at $targetCommit"
 } else {
+    $ErrorActionPreference = "Continue"
     & gh api --method POST "repos/$Repo/git/refs" -f "ref=refs/tags/$tag" -f "sha=$targetCommit" *> $null
-    if ($LASTEXITCODE -ne 0) { throw "could not create $tag at $targetCommit" }
+    $created = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $previousPreference
+    if (-not $created) { throw "could not create $tag at $targetCommit" }
     Write-Output "==> created tag $tag at $targetCommit"
 }
 
