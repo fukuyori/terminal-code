@@ -6,7 +6,7 @@ This file records notable changes to the Windows-native fork of terminal-code.
 The version before `-win.N` identifies the upstream terminal-code release; the
 suffix identifies the Windows fork revision based on that release.
 
-## 0.4.2-win.1 (unreleased)
+## 0.4.2-win.1 (2026-10-04)
 
 This release integrates the complete upstream terminal-code `v0.4.2` source at
 commit `6644166` into the Windows-native branch. Upstream's `v0.4.0` replaced
@@ -20,22 +20,32 @@ resolved onto that design.
 
 - tode no longer looks for, downloads or runs a terminal-browser install. The
   window is drawn by pixel's patched Electron (`pixel.exe`) and its Windows
-  engine (`pixel.node`), both taken from the terminal-browser fork's own
-  Windows build, together with the JavaScript that drives them.
+  engine (`pixel.node`), built from the copy of the terminal-browser fork's pixel
+  now kept in `pixel/` (`docs/pixel-origin.md`), together with the JavaScript
+  that drives them.
 - The install carries `node_modules\@zenbu-labs\pixel`, `pixel-native-win32-x64`,
   and a console `node.exe` under `runtime\`. `bin\tode.cmd` runs the `tode`
   command on that `node.exe`: attaching to a console fails for a process that
   has none, and `pixel.exe` is a GUI program even when it runs as node.
-- The pixel used is the fork's build, labelled `0.0.20`. It carries the three
-  code changes that npm's `0.0.23` has over `0.0.20` (the transparent page
-  background, the resize cursor names, the Electron download location); the two
-  were not compared in full.
-- A `PIXEL` file in the install records which terminal-browser commit and pixel
-  version the build came from, and the hash of `pixel.node`. The build checks
-  that the engine copied into the install matches the one it came from.
-- The build scripts take the terminal-browser checkout with `-TerminalBrowser`
-  or `TODE_TERMINAL_BROWSER`. `dist-windows.ps1` no longer checks for or
-  vendors terminal-browser, and the installer no longer asks for it.
+- The pixel is the terminal-browser fork's, labelled `0.0.20`, kept in `pixel/`.
+  It carries the three code changes that npm's `0.0.23` has over `0.0.20` (the
+  transparent page background, the resize cursor names, the Electron download
+  location); the two were not compared in full.
+- A `PIXEL` file in the install records the pixel version, the terminal-browser
+  commit `pixel/` was copied from, a hash of the contents of `pixel/` (so the
+  source is identified whether or not it has been committed, and a build does
+  not have to wait for a commit), the hash of `pixel.node`, and the
+  terminal-code commit with a note if the working tree had uncommitted changes.
+  The build checks that the engine copied into the install matches the one it
+  came from.
+- `scripts\build-pixel.ps1` builds `pixel/` (TypeScript, the Rust engine and
+  Electron), and the build, release and dev-install scripts run it first, so the
+  whole input is in this repository. It needs Node.js, npm and a Rust toolchain
+  with the MSVC build tools. `dist-windows.ps1` no longer checks for or vendors
+  terminal-browser, and the installer no longer asks for it.
+- The copy of pixel is a snapshot of the terminal-browser fork's `pixel/`
+  directory (about 2.8 MB, MIT); `docs/pixel-origin.md` records where it came
+  from and how to sync it.
 - Removed `src/runtime/release.ts`, `src/browserglue.ts`,
   `src/browser/mainscript.ts` and their tests; `src/runtime/fetch.ts` keeps the
   Windows target triple and archive extraction the download of the editor
@@ -59,6 +69,33 @@ resolved onto that design.
   made now lives in the window process.
 - `tode --theme` and the active theme follow the transparency setting.
 
+#### Releases are published only from what the release scripts made
+
+- `build-release.ps1` now leaves `release.json` in `out\windows-release`
+  (version, channel, whether it signed, the hash of the ZIP), and
+  `build-installer.ps1` adds the hash of the installer. `build-installer.ps1`
+  refuses a directory without that record, and `publish-windows.ps1` publishes
+  only a ZIP and an installer whose hashes match it, and only a signed build
+  unless `-AllowUnsigned` is passed. What `build-check.ps1` makes has no such
+  record and is refused.
+- Removed `scripts/package-windows.ps1`: it made the same ZIP, manifests and
+  installer as `build-release.ps1` and `build-installer.ps1` but could not sign,
+  and the release process is now only those two scripts. Its npm script
+  `package:windows` is gone with it.
+- `build-windows.ps1` (now `build-check.ps1`) stages into `out\check` instead of
+  `out\windows-release`, so trying a build no longer deletes the release
+  artifacts.
+
+#### Renamed scripts
+
+- `scripts/release-windows.ps1` is now `scripts/build-release.ps1`,
+  `scripts/installer-windows.ps1` is now `scripts/build-installer.ps1`, and
+  `scripts/build-windows.ps1` is now `scripts/build-check.ps1` (it stages an
+  install to try or check, and makes no release). The
+  steps and options are unchanged: `build-release.ps1 -Sign`, then
+  `build-installer.ps1 -Sign`, then `publish-windows.ps1`. Entries below 0.4.2
+  keep the old names, which is what those releases were built with.
+
 ### Added
 
 - `tode --enable-transparency` and `tode --disable-transparency`, from
@@ -70,8 +107,8 @@ resolved onto that design.
 ### Signing
 
 - `scripts\sign-windows.ps1 -Payload` signs the binaries inside the staged
-  install (`pixel.exe`, its dlls, `pixel.node`). `release-windows.ps1 -Sign`
-  does it before the ZIP is made, and `installer-windows.ps1 -Sign` stops if any
+  install (`pixel.exe`, its dlls, `pixel.node`). `build-release.ps1 -Sign`
+  does it before the ZIP is made, and `build-installer.ps1 -Sign` stops if any
   are still unsigned.
 
 ### Known limitations
@@ -85,7 +122,7 @@ resolved onto that design.
 - Upgrading from `0.3.4-win.1` through `tode --upgrade` was not run; an
   existing terminal-browser install is simply no longer used.
 
-## 0.3.4-win.1 (unreleased)
+## 0.3.4-win.1 (2026-09-04)
 
 This release integrates the complete upstream terminal-code `v0.3.4` source at
 commit `1c382930d3bb34297eef7bd83ea9b56dbba2fd16` into the Windows-native branch.

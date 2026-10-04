@@ -4,19 +4,18 @@
 
 .DESCRIPTION
     The posix counterpart is scripts/dist.sh. The staged layout comes from
-    stage-windows.ps1 (shared with release-windows.ps1) and the swap into the
+    stage-windows.ps1 (shared with build-release.ps1) and the swap into the
     install root is the same rename dance as posix, so a failure leaves the
     working install exactly as it was.
 
-    The install carries its own pixel, taken from the terminal-browser checkout
-    named by -TerminalBrowser or TODE_TERMINAL_BROWSER (see stage-windows.ps1),
-    so nothing else has to be installed beside it.
+    The install carries its own pixel, built first by build-pixel.ps1 from the
+    copy kept in pixel\ (docs\pixel-origin.md), so nothing else has to be
+    installed beside it.
 #>
 [CmdletBinding()]
 param(
     [string]$Version,
     [string]$Channel = "windows",
-    [string]$TerminalBrowser = "",
     [switch]$SkipPath
 )
 
@@ -51,7 +50,7 @@ Invoke-TodeBuild $root
 
 Write-Output "==> staging $Version"
 $stage = "$app.new"
-New-TodeStage $root $stage $Version $Channel $TerminalBrowser
+New-TodeStage $root $stage $Version $Channel
 
 Write-Output "==> installing to $app"
 $previous = "$app.old"

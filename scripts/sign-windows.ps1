@@ -9,8 +9,8 @@
     the uninstaller it assembles; run with no arguments it finds whatever in
     out\windows-release still needs a signature. With -Payload it signs the
     native binaries inside the staged payload instead (pixel's electron, its
-    dlls, and the engine pixel.node), which release-windows.ps1 -Sign does
-    before the zip is made and the installer-windows.ps1 -Sign checks for.
+    dlls, and the engine pixel.node), which build-release.ps1 -Sign does
+    before the zip is made and the build-installer.ps1 -Sign checks for.
 #>
 [CmdletBinding()]
 param(
@@ -62,7 +62,7 @@ function ResolveSignTool([string]$Explicit) {
 function PayloadTargets {
     $stage = Join-Path $root "out\windows-release\tode"
     if (-not (Test-Path -LiteralPath $stage)) {
-        throw "no staged payload at $stage; run scripts\release-windows.ps1 first"
+        throw "no staged payload at $stage; run scripts\build-release.ps1 first"
     }
     Get-ChildItem -LiteralPath $stage -Recurse -File -Include *.exe, *.dll, *.node |
         Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne "Valid" } |

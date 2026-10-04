@@ -1,0 +1,20 @@
+{
+  "name": "@zenbu-labs/pixel-native-win32-x64",
+  "version": "0.0.20",
+  "description": "[placeholder copy: prebuilt engine binary for pixel on win32-x64]",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fukuyori/pixel.git",
+    "directory": "packages/native/win32-x64"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "pixel.node"
+  ]
+}

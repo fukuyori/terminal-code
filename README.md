@@ -90,8 +90,8 @@ This release merges the complete upstream `v0.4.2` source (commit
 **No separate terminal-browser.** Upstream moved from fetching a
 terminal-browser build to running on [pixel](https://github.com/zenbu-labs/pixel)
 directly. Windows follows: pixel's patched Electron (`pixel.exe`) and its
-Windows engine (`pixel.node`) come from the terminal-browser fork's own build and
-are installed with tode, next to a `node.exe` that runs the `tode` command. An
+Windows engine (`pixel.node`) are built from a copy of the terminal-browser fork's
+pixel kept in this repository (`pixel/`) and are installed with tode, next to a `node.exe` that runs the `tode` command. An
 installed terminal-browser is no longer used and can be removed on its own.
 
 **One process per window.** A pixel process can attach to only one console, so
@@ -207,9 +207,10 @@ That stages the build into `%LOCALAPPDATA%\Programs\tode`, writes
 `bin\tode.cmd`, and adds that `bin` directory to the user PATH. A build is
 named after the upstream version this fork builds on plus its own revision,
 the way terminal-browser's Windows builds are: `0.4.2-win.1` is the first
-Windows build on upstream `0.4.2`. Building needs the terminal-browser checkout
-that holds the Windows build of pixel: pass `-TerminalBrowser <dir>` to the
-build scripts or set `TODE_TERMINAL_BROWSER`. The current one is the `$TodeWindowsVersion`
+Windows build on upstream `0.4.2`. The build scripts build pixel from `pixel/`
+first (`scripts\build-pixel.ps1`, see `docs/pixel-origin.md`). That needs
+Node.js, npm and a Rust toolchain with the MSVC build tools; the first build
+compiles the engine, which takes a few minutes, and downloads Electron. The current one is the `$TodeWindowsVersion`
 default at the top of `scripts\stage-windows.ps1`, shared by the dev install
 and the release scripts — edit that line to cut a new one, or pass `-Version`
 for a one-off. It ends up in `VERSION`, which is what `tode --version` reports.
@@ -327,8 +328,8 @@ than one SSH connection. The remote bundle currently supports Unix hosts.
 Windows support is experimental, and this is what it is made of:
 
 - **The browser.** [pixel](https://github.com/zenbu-labs/pixel) draws the pane,
-  from the Windows build in the terminal-browser fork. Its Electron
-  (`pixel.exe`) and engine (`pixel.node`) are installed with tode under
+  built from the copy in `pixel/` (the terminal-browser fork's Windows pixel). Its
+  Electron (`pixel.exe`) and engine (`pixel.node`) are installed with tode under
   `node_modules\@zenbu-labs`, and the `tode` command runs on a `node.exe` in
   `runtime\` — nothing is downloaded. You still need a terminal that speaks the
   [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/);
@@ -414,20 +415,23 @@ Not there yet:
   A dev install from the checkout is on the same channel, so `tode --upgrade`
   from one replaces it with the newest release.
 
-  Building and packaging from a checkout uses two scripts. The first compiles
-  and stages the payload; the second creates the upgrade ZIP, manifests, and
-  Inno Setup installer:
+  Cutting a release from a checkout takes two scripts, run by the maintainer with
+  `-Sign`. The first builds pixel and the payload, signs the payload's binaries
+  and creates the upgrade ZIP and manifests; the second creates the Inno Setup
+  installer, signed too:
 
   ```powershell
-  npm run build:windows                   # 1. compile + stage payload
-  npm run package:windows                 # 2. ZIP + manifests + Inno Setup
+  npm run release:windows -- -Sign        # 1. pixel, payload, ZIP + manifests
+  npm run installer:windows -- -Sign      # 2. Inno Setup installer
   ```
 
-  `package:windows` requires Inno Setup. terminal-code has no native
-  `tode.exe`; the installed entry point is `bin\tode.cmd`, so these scripts do
-  not provide a `-Sign` option. Inno Setup includes its standard uninstaller.
-  Both scripts use the version at the top of `scripts\stage-windows.ps1` — the
-  same value a dev install reports.
+  `-Sign` signs with the certificate `CODESIGN_CERT` names. The second script
+  needs Inno Setup. terminal-code has no native `tode.exe`; the installed entry
+  point is `bin\tode.cmd`. Inno Setup includes its standard uninstaller, which is
+  signed too. Both scripts use the version at the top of
+  `scripts\stage-windows.ps1` — the same value a dev install reports. To only
+  try a build without making any of that, `npm run build:windows` stages the
+  install in `out\check`.
 
   Publishing is a separate, explicitly invoked operation:
 

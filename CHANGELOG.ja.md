@@ -6,7 +6,7 @@
 `-win.N` より前の番号はベースとなるupstream terminal-codeのリリースを示し、
 末尾はそのリリースをベースにしたWindows forkのリビジョンを示します。
 
-## 0.4.2-win.1（未リリース）
+## 0.4.2-win.1（2026-10-04）
 
 このリリースでは、upstream terminal-code `v0.4.2` のソース全体（コミット
 `6644166`）をWindowsネイティブブランチへ統合しました。upstreamの `v0.4.0` は
@@ -21,21 +21,30 @@ terminal-browserのランタイムを[pixel](https://github.com/zenbu-labs/pixel
 - todeは、terminal-browserのインストールを探したり、ダウンロードしたり、実行したり
   しなくなりました。ウィンドウは、pixelのパッチ済みElectron（`pixel.exe`）と
   Windows用エンジン（`pixel.node`）、およびそれらを動かすJavaScriptで描画されます。
-  いずれもterminal-browser forkのWindows版ビルドから取り込みます。
+  いずれも、terminal-browser forkのpixelを複製してこのリポジトリに置いた `pixel/`
+  （`docs/pixel-origin.md`）からビルドします。
 - インストールには `node_modules\@zenbu-labs\pixel`、`pixel-native-win32-x64`、
   `runtime\` 配下のコンソール型 `node.exe` が含まれます。`bin\tode.cmd` は、この
   `node.exe` で `tode` コマンドを実行します。コンソールを持たないプロセスは
   コンソールへの接続に失敗し、`pixel.exe` はNodeとして動かしてもGUIプログラム
   だからです。
-- 使用するpixelはforkのビルドで、版表記は `0.0.20` です。npmの `0.0.23` が
-  `0.0.20` に対して持つ3つのコード変更（透過時のページ背景、リサイズ用カーソル名、
-  Electronのダウンロード先）は含まれていますが、全体の比較は行っていません。
-- インストール内の `PIXEL` ファイルに、取り込み元のterminal-browserのコミット、
-  pixelの版、`pixel.node` のハッシュを記録します。ビルド時に、インストールへ
-  コピーしたエンジンが元のものと一致することを検査します。
-- ビルドスクリプトは、terminal-browserのチェックアウトを `-TerminalBrowser`
-  または `TODE_TERMINAL_BROWSER` で受け取ります。`dist-windows.ps1` は
-  terminal-browserの検査と同梱を行わなくなり、インストーラーもそれを要求しません。
+- pixelはterminal-browser forkのもので、版表記は `0.0.20`、`pixel/` に置いています。
+  npmの `0.0.23` が `0.0.20` に対して持つ3つのコード変更（透過時のページ背景、
+  リサイズ用カーソル名、Electronのダウンロード先）は含まれていますが、全体の
+  比較は行っていません。
+- インストール内の `PIXEL` ファイルに、pixelの版、`pixel/` の複製元のterminal-browser
+  のコミット、`pixel/` の内容のハッシュ（コミットの有無によらず出所を特定でき、
+  ビルドのためにコミットを待つ必要がありません）、`pixel.node` のハッシュ、
+  terminal-codeのコミット（作業ツリーに未コミットの変更があれば、その注記）を
+  記録します。ビルド時に、インストールへコピーしたエンジンが元のものと一致する
+  ことを検査します。
+- `scripts\build-pixel.ps1` が `pixel/`（TypeScript、Rustのエンジン、Electron）を
+  ビルドし、ビルド、リリース、開発版インストールの各スクリプトが最初に実行する
+  ため、入力のすべてがこのリポジトリ内にあります。Node.js、npm、MSVCビルドツール
+  つきのRustツールチェーンが必要です。`dist-windows.ps1` はterminal-browserの検査と
+  同梱を行わなくなり、インストーラーもそれを要求しません。
+- pixelの複製は、terminal-browser forkの `pixel/` ディレクトリのスナップショット
+  （約2.8 MB、MIT）です。複製元と同期の手順は `docs/pixel-origin.md` に記録しています。
 - `src/runtime/release.ts`、`src/browserglue.ts`、`src/browser/mainscript.ts` と
   それらのテストを削除しました。`src/runtime/fetch.ts` は、エディターサーバーの
   ダウンロードが使うWindowsのターゲット識別子とアーカイブ展開を保持します。
@@ -57,6 +66,31 @@ terminal-browserのランタイムを[pixel](https://github.com/zenbu-labs/pixel
   ウィンドウ用プロセスが行います。
 - `tode --theme` と現在のテーマは、透過設定に従います。
 
+#### 公開するのは、リリース用スクリプトが作ったものだけ
+
+- `build-release.ps1` が `out\windows-release` に `release.json`（版、チャンネル、署名
+  したか、ZIPのハッシュ）を残し、`build-installer.ps1` がインストーラーのハッシュを
+  追記します。`build-installer.ps1` はこの記録のないディレクトリを拒否し、
+  `publish-windows.ps1` は、ハッシュが記録と一致するZIPとインストーラーだけを、
+  署名済みのビルドに限って（`-AllowUnsigned` を渡したときを除く）公開します。
+  `build-check.ps1` が作ったものには記録がなく、拒否されます。
+- `scripts/package-windows.ps1` を削除しました。`build-release.ps1` と
+  `build-installer.ps1` と同じZIP、manifest、インストーラーを作りながら署名できず、
+  リリースの手順は、その2本だけになりました。npmスクリプト `package:windows` も
+  あわせて削除しています。
+- `build-windows.ps1`（現在は `build-check.ps1`）の出力先を `out\windows-release` から `out\check` に変えました。
+  ビルドを試すたびに、リリースの成果物が削除されることがなくなります。
+
+#### スクリプト名の変更
+
+- `scripts/release-windows.ps1` を `scripts/build-release.ps1` に、
+  `scripts/installer-windows.ps1` を `scripts/build-installer.ps1` に、
+  `scripts/build-windows.ps1` を `scripts/build-check.ps1`（試す・確認するための
+  インストール内容を配置し、リリースは作らない）に改名しました。
+  手順とオプションは変わりません（`build-release.ps1 -Sign`、
+  `build-installer.ps1 -Sign`、`publish-windows.ps1` の順）。0.4.2より前の記載は、
+  当時のビルドで使った旧名のままです。
+
 ### 追加
 
 - upstreamの `tode --enable-transparency` と `tode --disable-transparency`。
@@ -68,8 +102,8 @@ terminal-browserのランタイムを[pixel](https://github.com/zenbu-labs/pixel
 ### 署名
 
 - `scripts\sign-windows.ps1 -Payload` は、ステージしたインストール内のバイナリ
-  （`pixel.exe`、そのdll、`pixel.node`）に署名します。`release-windows.ps1 -Sign` は
-  ZIPを作る前に署名し、`installer-windows.ps1 -Sign` は未署名のものが残っていれば
+  （`pixel.exe`、そのdll、`pixel.node`）に署名します。`build-release.ps1 -Sign` は
+  ZIPを作る前に署名し、`build-installer.ps1 -Sign` は未署名のものが残っていれば
   停止します。
 
 ### 既知の制限
@@ -83,7 +117,7 @@ terminal-browserのランタイムを[pixel](https://github.com/zenbu-labs/pixel
 - `0.3.4-win.1` から `tode --upgrade` で更新する手順は確認していません。既存の
   terminal-browserのインストールは、単に使用されなくなります。
 
-## 0.3.4-win.1（未リリース）
+## 0.3.4-win.1（2026-09-04）
 
 このリリースでは、upstream terminal-code `v0.3.4` のソース全体（コミット
 `1c382930d3bb34297eef7bd83ea9b56dbba2fd16`）をWindowsネイティブブランチへ

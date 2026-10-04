@@ -40,23 +40,52 @@ $out = Join-Path $root "out\windows-release"
 $zip = Join-Path $out "tode-$Version-win32-x64.zip"
 $latest = Join-Path $out "latest.json"
 $pinned = Join-Path $out "manifest.json"
+$buildHint = "run scripts\build-release.ps1 -Sign, then scripts\build-installer.ps1 -Sign"
+
+# Only what build-release.ps1 and build-installer.ps1 made is published. They
+# leave release.json behind, naming the version and the hashes of the zip and
+# the installer; a directory made by any other script has none, and a file in it
+# that is not the recorded one is not published either.
+$recordFile = Join-Path $out "release.json"
+if (-not (Test-Path -LiteralPath $recordFile -PathType Leaf)) {
+    throw "no release.json in $out, so it was not made by build-release.ps1; $buildHint"
+}
+$record = Get-Content -LiteralPath $recordFile -Raw | ConvertFrom-Json
+if ($record.madeBy -ne "build-release.ps1") {
+    throw "$recordFile says $($record.madeBy) made this; $buildHint"
+}
+if ($record.version -ne $Version) {
+    throw "out\windows-release holds $($record.version), not $Version; $buildHint"
+}
 foreach ($file in @($zip, $latest, $pinned)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        throw "missing $file; run scripts\build-windows.ps1 and scripts\package-windows.ps1 first"
+        throw "missing $file; $buildHint"
     }
+}
+if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $record.zip.sha256) {
+    throw "$zip is not the one build-release.ps1 made (its hash differs from release.json); $buildHint"
 }
 $built = (Get-Content -LiteralPath $latest -Raw | ConvertFrom-Json).version
 if ($built -ne $Version) {
-    throw "out\windows-release holds $built, not $Version; rebuild and repackage it"
+    throw "out\windows-release holds $built, not $Version; $buildHint"
+}
+if (-not $record.signed -and -not $AllowUnsigned) {
+    throw "build-release.ps1 ran without -Sign, so the payload's binaries are unsigned; run it again with -Sign, or pass -AllowUnsigned to publish this unsigned build"
 }
 
 $assets = @($zip, $latest, $pinned)
-$installer = Get-ChildItem -LiteralPath $out -Filter "tode-*-windows-x64.exe" -File |
-    Select-Object -First 1
-if ($installer) {
+$installer = $null
+if ($record.installer) {
+    $installer = Get-Item -LiteralPath (Join-Path $out $record.installer.file) -ErrorAction SilentlyContinue
+    if (-not $installer) { throw "release.json names $($record.installer.file), which is not in $out; $buildHint" }
+    if ((Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $record.installer.sha256) {
+        throw "$($installer.Name) is not the one build-installer.ps1 made (its hash differs from release.json); $buildHint"
+    }
     $assets += $installer.FullName
 } else {
-    Write-Warning "no installer in $out; run scripts\package-windows.ps1 first"
+    $stray = Get-ChildItem -LiteralPath $out -Filter "tode-*-windows-x64.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($stray) { throw "$($stray.Name) is in $out but build-installer.ps1 did not make it (release.json has no installer); $buildHint" }
+    Write-Warning "no installer in $out; run scripts\build-installer.ps1 -Sign first"
 }
 
 # The updatable engine under ProgramData is the one actually running; the

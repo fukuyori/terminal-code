@@ -1,6 +1,6 @@
 ; The Windows installer for this fork's tode build. The payload is what
-; scripts\build-windows.ps1 stages into out\windows-release\tode — the same
-; tree the release zip carries — and scripts\package-windows.ps1 is what
+; scripts\build-release.ps1 stages into out\windows-release\tode — the same
+; tree the release zip carries — and scripts\build-installer.ps1 is what
 ; compiles this, deriving the numeric MyAppVersion from the payload's VERSION.
 ; The shape follows terminal-browser's installer so the pair install alike:
 ; per-user under {localappdata}\Programs, a user-PATH task, no elevation.

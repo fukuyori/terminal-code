@@ -7,8 +7,8 @@
 | 項目 | 決定 |
 |---|---|
 | 取り込み方式 | **案 A: 全面取り込み**(pixel + daemon を採用する) |
-| Windows 用 pixel | **`D:\home\source\rust\terminal-browser\pixel`**(fukuyori/terminal-browser、Windows フォーク)を使う |
-| 配布 | **同梱**。upstream の配布物も `node_modules/@zenbu-labs/pixel` と Electron を同梱している。Windows 版も同じ位置にフォークのビルド物を入れる |
+| Windows 用 pixel | terminal-browser フォークの `pixel/` を、**このリポジトリの `pixel/` に複製して持つ**（ソース約 2.8 MB、MIT）。`scripts\build-pixel.ps1` でビルドし、`stage-windows.ps1` が取り込む。複製元と同期の手順は `docs/pixel-origin.md`、upstream 更新時の手順はチェックリストの「Sync pixel」 |
+| 配布 | **同梱**。upstream の配布物も `node_modules/@zenbu-labs/pixel` と Electron を同梱している。Windows 版も同じ位置に pixel のビルド物を入れる |
 | 作業の中心 | **tode 側**(`launcher.ts`、起動 `.cmd`、named pipe、競合解消、同梱スクリプト) |
 | pixel の不足が見つかった場合は | **`fukuyori/terminal-browser` に issue を出す**。tode 側で pixel を直接改造しない |
 | 旧 `D:\home\source\rust\pixel`(v0.0.15 + Windows 7 件) | 履歴参照用。依存先にしない |
@@ -26,14 +26,19 @@ pixel の不足が見つかった場合は、`fukuyori/terminal-browser` に iss
 | `npm run build` / 全テスト | 通過(140 件) |
 | Windows 版 daemon(案 A: 1 ウィンドウ 1 プロセス) | 実装済み(`app/protocol.ts` の named pipe、`daemon.ts`、`control.ts`、`launch.ts`) |
 | テーマ選択の保護(`THEME_CHOICE_FILE`)の移植 | 実装済み(`daemon.ts` の `broadcastTheme`、`applyTransparency`) |
-| pixel の同梱(`stage-windows.ps1`) | 実装済み。`npm ci --omit=dev --ignore-scripts` の後に `node_modules\@zenbu-labs\pixel` を terminal-browser の Windows ビルドに差し替え、`pixel-native-win32-x64` を追加し、`PIXEL`(出所とハッシュ)を記録。`bin\tode.cmd` は同梱の `pixel.exe` を Node として起動する |
-| ビルドスクリプト | `build-windows.ps1` / `release-windows.ps1` / `dist-windows.ps1` に `-TerminalBrowser`(または環境変数 `TODE_TERMINAL_BROWSER`)を追加。`dist-windows.ps1` の terminal-browser 検査と `-VendorBrowser` は削除 |
-| 署名(Phase 4.5) | `sign-windows.ps1 -Payload` を追加(payload の exe / dll / node)。`release-windows.ps1 -Sign` が zip の前に署名し、`installer-windows.ps1 -Sign` は未署名の payload があれば失敗する。`tode.iss` の terminal-browser 検査は削除 |
-| ステージの検証 | `build-windows.ps1` で `out\windows-release\tode` を作成し、`tode --help` が同梱 `pixel.exe` で動くことを確認。ウィンドウ用プロセスを隔離環境で単体起動し、pipe と pid の作成、`status` の応答、`shutdown` での終了とファイル削除を確認 |
+| pixel の同梱(`stage-windows.ps1`) | 実装済み。`npm ci --omit=dev --ignore-scripts` の後に、`node_modules\@zenbu-labs\pixel` を、リポジトリ内の `pixel/` のビルド結果に差し替え、`pixel-native-win32-x64` を追加し、`PIXEL` に出所を記録（pixel の版、複製元のコミット、`pixel/` の内容のハッシュ、`pixel.node` のハッシュ、terminal-code のコミット）。`bin\tode.cmd` は同梱の `node.exe` で `tode` を実行する |
+| ビルドスクリプト | `build-pixel.ps1` を追加し、`build-check.ps1` / `build-release.ps1` / `dist-windows.ps1` が最初に実行する。外部のチェックアウト（`-TerminalBrowser` など）への依存は廃止。`dist-windows.ps1` の terminal-browser 検査と `-VendorBrowser` は削除。`release-windows.ps1` → `build-release.ps1`、`installer-windows.ps1` → `build-installer.ps1`、`build-windows.ps1` → `build-check.ps1`（出力先は `out\check`）に改名し、`package-windows.ps1` は削除 |
+| リリース記録 | `build-release.ps1` が `release.json`（版、署名したか、ZIP のハッシュ）を残し、`build-installer.ps1` がインストーラーのハッシュを追記。`build-installer.ps1` は記録のないディレクトリを拒否し、`publish-windows.ps1` は記録と一致する成果物だけを、署名済みの場合に限って公開する |
+| 署名(Phase 4.5) | `sign-windows.ps1 -Payload` を追加(payload の exe / dll / node)。`build-release.ps1 -Sign` が zip の前に署名し、`build-installer.ps1 -Sign` は未署名の payload があれば失敗する。`tode.iss` の terminal-browser 検査は削除 |
+| ステージの検証 | `build-check.ps1`（当時の名前は `build-windows.ps1`）で `out\windows-release\tode` を作成し、`tode --help` が同梱 `pixel.exe` で動くことを確認。ウィンドウ用プロセスを隔離環境で単体起動し、pipe と pid の作成、`status` の応答、`shutdown` での終了とファイル削除を確認 |
 | 実機での起動確認(Phase 3、自動操作による部分) | 完了。隔離環境で WezTerm を別プロセスで起動し、ウィンドウ用プロセスの起動と描画、初回画面(インポート、ショートカット)、VSCodium ワークベンチの読み込み、ブリッジ拡張の登録、`--enable-transparency` / `--disable-transparency`、`--quit`、`--shutdown` を確認(DevTools ポート経由)。**画面の見た目、入力、IME、テーマ色、透過の見た目は未確認(目視が必要)** |
 | 判明して直した問題 | (1) `AttachConsole(pid)` は pid がコンソールを持たないと失敗する(`os error 6`)。`pixel.exe` は GUI サブシステムで、Node として動かしてもコンソールが無いため、CLI は同梱の `runtime\node.exe`(コンソール型)で動かす。(2) サーバー停止でプロセスが残る(VSCodium の子プロセス)。Windows の `kill` を `taskkill /T /F` に変更 |
 | 既知の制限(対応しない) | IME の変換候補が、ページのキャレットではなく端末カーソルの位置に出る(VSCodium では位置が動く)。terminal-browser の issue #3 に記録し、Ghostty 側で扱うことになった。tode のマージの完了条件には含めない |
-| README / CHANGELOG / 版番号 | **未実施** |
+| README / CHANGELOG / 版番号 | 完了。版番号 `0.4.2-win.1`（`stage-windows.ps1` の `$TodeWindowsVersion`）、README と CHANGELOG の日英、チェックリスト（「Sync pixel」を含む） |
+
+## 方針の変更（2026-10-04）: pixel をリポジトリ内に持つ
+
+外部のチェックアウト（`-TerminalBrowser`、環境変数、相対パスの既定値）を参照する方式をやめ、terminal-browser フォークの `pixel/` をこのリポジトリに複製した。理由: pixel に問題が見つかったとき（IME の変換候補の位置など）に、他のリポジトリの状態に頼らず、自分のリポジトリだけで再現・計測・修正できるようにするため。複製は `d1b9edb` のコミット済みの内容で、未コミットの変更は含まない。変更を加えたときは `docs/pixel-origin.md` に記録する。
 
 ## 1. 現状(調査結果)
 
@@ -144,11 +149,10 @@ windows-native はこれらを**変更して使っている**ため、modify/del
 - [ ] `main` は upstream の追従専用で、**ここにはコミットしない**。`main` の作業ツリーにある `.gitignore` の変更(`out/` の追加のみ)は、
       windows-native に同じ行が既にあるため不要。`main` では扱わず、作業は windows-native から切るブランチで行う。
 - [ ] 未追跡の `docs/`(この計画書)は windows-native 側でコミットする(時期は利用者の指示による)。
-- [ ] 同梱方式(決定): tode のビルドでは pixel をビルドせず、terminal-browser のビルド済みの `pixel/` を環境変数でパス指定して取り込む。
-      取り込む物は `pixel` の `dist`、`package.json`、`packages/native/win32-x64`(`pixel.node`)、`electron/dist`(`pixel.exe`)。
-      配置先は `node_modules/@zenbu-labs/pixel`(upstream と同じ位置)。`terminal-browser\scripts\build-windows.ps1` の同梱処理を参考にする。
-- [ ] 取り込み時に、出所の terminal-browser のコミットと pixel の版を配布物内のファイルに記録し、
-      `dist` と `pixel.node` が同じビルドであることを検査する(不一致なら失敗させる)。
+- [x] 同梱方式（2026-10-04 に変更）: terminal-browser フォークの `pixel/` をこのリポジトリの `pixel/` に複製し、`scripts\build-pixel.ps1` でビルドして、`stage-windows.ps1` が `node_modules/@zenbu-labs/pixel`（upstream と同じ位置）に取り込む。
+      当初の「terminal-browser のビルド済みの物を環境変数でパス指定して取り込む」方式は、問題が出たときに自分のリポジトリだけで検証できないため廃止した。
+- [x] 取り込み時に、出所（pixel の版、複製元のコミット、`pixel/` の内容のハッシュ、`pixel.node` のハッシュ）を `PIXEL` ファイルに記録し、
+      インストールへコピーしたエンジンが元と一致することを検査する（不一致なら失敗）。
 - [ ] 別ターミナルで検証する(共有 server / browser daemon を作業中セッションで試さない)。
 
 ### Phase 1: 作業ブランチ作成と merge
@@ -220,6 +224,6 @@ windows-native はこれらを**変更して使っている**ため、modify/del
 
 ## 7. 決定済みの事項
 
-- 案 A(全面取り込み)。pixel は同梱し、同梱方式は「ビルド済みの `terminal-browser\pixel` を取り込む」。
+- 案 A(全面取り込み)。pixel は同梱し、同梱方式は「`pixel/` をリポジトリ内に複製して、このリポジトリでビルドする」（`docs/pixel-origin.md`）。
 - `main` は upstream 追従専用でコミットしない。この文書は windows-native 側に置く。
 - pixel の不足が見つかった場合は、`fukuyori/terminal-browser` に issue を出す。

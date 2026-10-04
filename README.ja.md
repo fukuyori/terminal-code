@@ -90,7 +90,8 @@ Windowsブランチへマージしています。変更の全記録は
 terminal-browserのビルドを取得して使う方式から、[pixel](https://github.com/zenbu-labs/pixel)
 を直接使う方式へ移りました。Windowsも同じ方式にしています。pixelのパッチ済み
 Electron（`pixel.exe`）とWindows用エンジン（`pixel.node`）は、terminal-browser
-forkのビルドから取り込まれ、`tode` コマンドを実行する `node.exe` とともに
+forkのpixelの複製をこのリポジトリに置いた `pixel/` からビルドされ、`tode` コマンドを実行する
+`node.exe` とともに
 インストールされます。インストール済みのterminal-browserはもう使用されないため、
 単独で削除できます。
 
@@ -205,9 +206,10 @@ npm run dist:windows
 その `bin` ディレクトリがユーザーの `PATH` に追加されます。Windows版の番号は
 ベースとなるupstream版とfork固有のリビジョンを組み合わせます。
 `0.4.2-win.1` はupstream `0.4.2` をベースにした最初のWindowsビルドです。
-ビルドには、pixelのWindows版を含むterminal-browserのチェックアウトが必要で、
-ビルドスクリプトの `-TerminalBrowser <dir>` または環境変数
-`TODE_TERMINAL_BROWSER` で指定します。
+ビルドスクリプトは最初に `pixel/` からpixelをビルドします（`scripts\build-pixel.ps1`、
+`docs/pixel-origin.md` を参照）。Node.js、npm、MSVCビルドツールつきのRust
+ツールチェーンが必要です。初回のビルドではエンジンのコンパイルに数分かかり、
+Electronをダウンロードします。
 現在値は `scripts\stage-windows.ps1` 先頭の `$TodeWindowsVersion` で、開発版と
 リリーススクリプトが共有します。リリース時はこの値を変更し、一時的なビルドでは
 `-Version` を指定できます。値は `VERSION` に保存され、`tode --version` が表示します。
@@ -320,7 +322,8 @@ Windowsでは OpenSSH Client、`PATH` 上の
 Windows対応は実験的で、次の要素で構成されています。
 
 - **ブラウザー。** [pixel](https://github.com/zenbu-labs/pixel)がペインを描画します。
-  terminal-browser forkのWindows版ビルドのElectron（`pixel.exe`）とエンジン
+  `pixel/` の複製（terminal-browser forkのWindows版pixel）からビルドしたElectron
+  （`pixel.exe`）とエンジン
   （`pixel.node`）が、`node_modules\@zenbu-labs` 配下にtodeとともにインストール
   され、`tode` コマンドは `runtime\` の `node.exe` で実行されます。ダウンロードは
   ありません。kitty graphics protocol対応ターミナルが必要で、現在の検証対象は
@@ -392,20 +395,21 @@ Windowsリリースの更新はこのforkの
 チェックアウトからの開発版も同じチャンネルを使用するため、`tode --upgrade` で
 最新リリースへ置き換えられます。
 
-チェックアウトからのビルドとパッケージ作成には2本のスクリプトを使用します。
-1本目がコンパイルとpayload配置、2本目がアップグレード用ZIP、manifest、
-Inno Setupインストーラーを作成します。
+チェックアウトからリリースを作るには、メンテナーが `-Sign` つきで2本のスクリプトを
+実行します。1本目がpixelとpayloadのビルド、payload内バイナリの署名、アップグレード用
+ZIPとmanifestの作成、2本目がInno Setupインストーラー（署名つき）の作成です。
 
 ```powershell
-npm run build:windows                   # 1. コンパイル、payload配置
-npm run package:windows                 # 2. ZIP、manifest、Inno Setup
+npm run release:windows -- -Sign        # 1. pixel、payload、ZIP、manifest
+npm run installer:windows -- -Sign      # 2. Inno Setupインストーラー
 ```
 
-`package:windows` にはInno Setupが必要です。terminal-codeにはネイティブの
-`tode.exe` がなく、インストール後のエントリーポイントは `bin\tode.cmd` なので、
-この2本には `-Sign` オプションを設けていません。Inno Setupの標準アンインストーラーは
-インストーラー内に含まれます。両スクリプトは `scripts\stage-windows.ps1` 先頭の
-バージョンを使用し、これは開発版の表示値とも共通です。
+`-Sign` は `CODESIGN_CERT` が指す証明書で署名します。2本目にはInno Setupが必要です。
+terminal-codeにはネイティブの `tode.exe` がなく、インストール後のエントリーポイントは
+`bin\tode.cmd` です。Inno Setupの標準アンインストーラーもインストーラー内に含まれ、
+署名されます。両スクリプトは `scripts\stage-windows.ps1` 先頭のバージョンを使用し、
+これは開発版の表示値とも共通です。配布物を作らずビルドを試すだけなら、
+`npm run build:windows` が `out\check` にインストール内容を配置します。
 
 公開は明示的に実行する別の操作です。
 
